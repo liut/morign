@@ -21,7 +21,6 @@ const (
 var (
 	// 新的 LLM Clients - 按用途分离
 	llmEm llm.Client // for Embedding
-	llmIt llm.Client // for Interact (chat)
 	llmSu llm.Client // for Summarize/Completion
 
 	llmOnce sync.Once
@@ -29,12 +28,8 @@ var (
 
 func initLLMClients() {
 	initLLMClient("Embedding", &settings.Current.Embedding, &llmEm)
-	initLLMClient("Interact", &settings.Current.Interact, &llmIt)
 	initLLMClient("Summarize", &settings.Current.Summarize, &llmSu)
 
-	if llmIt == nil {
-		logger().Fatalw("Interact provider is required but not configured")
-	}
 }
 
 func initLLMClient(name string, p *settings.Provider, target *llm.Client) {
@@ -44,7 +39,14 @@ func initLLMClient(name string, p *settings.Provider, target *llm.Client) {
 	}
 
 	var err error
-	*target, err = llm.NewClient(
+	*target, err = NewLLMClient(p)
+	if err != nil {
+		logger().Fatalw("create llm client failed", "provider", name, "err", err)
+	}
+}
+
+func NewLLMClient(p *settings.Provider) (llm.Client, error) {
+	return llm.NewClient(
 		llm.WithProvider(p.Type),
 		llm.WithAPIKey(p.APIKey),
 		llm.WithBaseURL(p.URL),
@@ -52,15 +54,6 @@ func initLLMClient(name string, p *settings.Provider, target *llm.Client) {
 		llm.WithDebug(p.Debug),
 		llm.WithLogDir(p.LogDir),
 	)
-	if err != nil {
-		logger().Fatalw("create llm client failed", "provider", name, "err", err)
-	}
-}
-
-// GetLLMClient 获取 LLM Client (默认 Interact)
-func GetLLMClient() llm.Client {
-	llmOnce.Do(initLLMClients)
-	return llmIt
 }
 
 // GetLLMEmbeddingClient 获取 Embedding 用 LLM Client

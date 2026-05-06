@@ -117,9 +117,14 @@ func newapi(sto stores.Storage) *api {
 
 	staffio.RegisterStateStore(sto.State())
 
+	llmClient, err := stores.NewLLMClient(&settings.Current.Interact)
+	if err != nil {
+		logger().Fatalw("create llm interact client failed", "err", err)
+	}
+
 	return &api{
 		sto:      sto,
-		llm:      stores.GetLLMClient(),
+		llm:      llmClient,
 		preset:   preset,
 		toolreg:  toolreg,
 		toolExec: NewToolExecutor(toolreg),

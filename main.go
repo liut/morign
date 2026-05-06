@@ -157,9 +157,9 @@ func agent(cc *cli.Context) error {
 		return fmt.Errorf("message is required, use -m flag")
 	}
 
-	client := stores.GetLLMClient()
-	if client == nil {
-		return fmt.Errorf("llm client not initialized")
+	client, err := stores.NewLLMClient(&settings.Current.Interact)
+	if err != nil {
+		return err
 	}
 
 	ctx := context.Background()

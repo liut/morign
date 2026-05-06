@@ -93,7 +93,6 @@ func getEnvOrDefault(key, defaultValue string) string {
 func init() {
 	m := &mockEmbeddingClient{}
 	llmEm = m
-	llmIt = m
 	llmSu = m
 }
 
