@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -40,7 +41,7 @@ func New(cfg Config) Service {
 	if cfg.Debug {
 		ar.Use(middleware.Logger)
 	}
-	ar.Use(middleware.Recoverer, middleware.RealIP)
+	ar.Use(recoverer(cfg.Debug), middleware.RealIP)
 
 	s := &server{
 		Addr: cfg.Addr, ar: ar,
@@ -120,6 +121,29 @@ func (s *server) strapRouter(ar chi.Router) {
 	})
 	if s.cfg.DocHandler != nil {
 		ar.NotFound(s.cfg.DocHandler.ServeHTTP)
+	}
+}
+
+func recoverer(isDebug bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				if rvr := recover(); rvr != nil {
+					if rvr == http.ErrAbortHandler {
+						panic(rvr)
+					}
+					logger().Errorw("panic recovered", "err", rvr, "stack", string(debug.Stack()))
+					if r.Header.Get("Connection") != "Upgrade" {
+						if isDebug {
+							http.Error(w, fmt.Sprintf("panic: %v\n\n%s", rvr, debug.Stack()), http.StatusInternalServerError)
+						} else {
+							http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+						}
+					}
+				}
+			}()
+			next.ServeHTTP(w, r)
+		})
 	}
 }
 
