@@ -63,14 +63,14 @@ test-lint:
 test-stores:
   stage: test
   script:
-    - grep morrigandb /etc/hosts || echo "not found db host"
+    - grep morigndb /etc/hosts || echo "not found db host"
     - go test -tags=integration -v -cover ./pkg/services/stores
   coverage: '/coverage: \d+.\d+% of statements/'
 
 test-initdb:
   stage: test
   script:
-    - grep morrigandb /etc/hosts || echo "not found db host"
+    - grep morigndb /etc/hosts || echo "not found db host"
     - go run . initdb
   only:
     changes:
