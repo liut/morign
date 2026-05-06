@@ -20,60 +20,40 @@ const (
 
 var (
 	// 新的 LLM Clients - 按用途分离
-	llmEm   llm.Client // for Embedding
-	llmIt   llm.Client // for Interact (chat)
-	llmSu   llm.Client // for Summarize/Completion
+	llmEm llm.Client // for Embedding
+	llmIt llm.Client // for Interact (chat)
+	llmSu llm.Client // for Summarize/Completion
 
 	llmOnce sync.Once
 )
 
 func initLLMClients() {
-	validateProvider("Embedding", &settings.Current.Embedding)
-	validateProvider("Interact", &settings.Current.Interact)
-	validateProvider("Summarize", &settings.Current.Summarize)
+	initLLMClient("Embedding", &settings.Current.Embedding, &llmEm)
+	initLLMClient("Interact", &settings.Current.Interact, &llmIt)
+	initLLMClient("Summarize", &settings.Current.Summarize, &llmSu)
 
-	var err error
-
-	llmEm, err = llm.NewClient(
-		llm.WithProvider(settings.Current.Embedding.Type),
-		llm.WithAPIKey(settings.Current.Embedding.APIKey),
-		llm.WithBaseURL(settings.Current.Embedding.URL),
-		llm.WithModel(settings.Current.Embedding.Model),
-		llm.WithDebug(settings.Current.Embedding.Debug),
-		llm.WithLogDir(settings.Current.Embedding.LogDir),
-	)
-	if err != nil {
-		logger().Fatalw("create llm embedding client failed", "err", err)
-	}
-
-	llmIt, err = llm.NewClient(
-		llm.WithProvider(settings.Current.Interact.Type),
-		llm.WithAPIKey(settings.Current.Interact.APIKey),
-		llm.WithBaseURL(settings.Current.Interact.URL),
-		llm.WithModel(settings.Current.Interact.Model),
-		llm.WithDebug(settings.Current.Interact.Debug),
-		llm.WithLogDir(settings.Current.Interact.LogDir),
-	)
-	if err != nil {
-		logger().Fatalw("create llm interact client failed", "err", err)
-	}
-
-	llmSu, err = llm.NewClient(
-		llm.WithProvider(settings.Current.Summarize.Type),
-		llm.WithAPIKey(settings.Current.Summarize.APIKey),
-		llm.WithBaseURL(settings.Current.Summarize.URL),
-		llm.WithModel(settings.Current.Summarize.Model),
-		llm.WithDebug(settings.Current.Summarize.Debug),
-		llm.WithLogDir(settings.Current.Summarize.LogDir),
-	)
-	if err != nil {
-		logger().Fatalw("create llm summarize client failed", "err", err)
+	if llmIt == nil {
+		logger().Fatalw("Interact provider is required but not configured")
 	}
 }
 
-func validateProvider(name string, p *settings.Provider) {
+func initLLMClient(name string, p *settings.Provider, target *llm.Client) {
 	if p.APIKey == "" && p.URL == "" {
-		logger().Fatalw("provider config invalid: API_KEY and URL cannot both be empty", "provider", name)
+		logger().Errorw("provider config invalid: API_KEY and URL cannot both be empty", "provider", name)
+		return
+	}
+
+	var err error
+	*target, err = llm.NewClient(
+		llm.WithProvider(p.Type),
+		llm.WithAPIKey(p.APIKey),
+		llm.WithBaseURL(p.URL),
+		llm.WithModel(p.Model),
+		llm.WithDebug(p.Debug),
+		llm.WithLogDir(p.LogDir),
+	)
+	if err != nil {
+		logger().Fatalw("create llm client failed", "provider", name, "err", err)
 	}
 }
 

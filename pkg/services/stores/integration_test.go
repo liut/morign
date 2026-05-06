@@ -91,8 +91,10 @@ func getEnvOrDefault(key, defaultValue string) string {
 }
 
 func init() {
-	// 用 mock 替换 embedding client
-	llmEm = &mockEmbeddingClient{}
+	m := &mockEmbeddingClient{}
+	llmEm = m
+	llmIt = m
+	llmSu = m
 }
 
 // TestMain 测试入口
