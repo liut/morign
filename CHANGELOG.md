@@ -1,5 +1,53 @@
 # Changelog
 
+## v0.4.1 (2026-05-07)
+
+### Bug 修复
+
+- 修复 chi 默认 Recoverer 堆栈跟踪泄漏，改用自定义恢复中间件
+- 修复 `use GetLLMEmbeddingClient()` 替代直接访问 `llmEm`
+- 修复 provider 配置校验从 config init 移到 stores lazy-init
+- 修复 capability 导入时 skipai tag 大小写不敏感匹配
+- 修复重复的 corpus 向量索引迁移文件
+- 修复 LLM client 初始化重构以支持无 provider 配置时的测试 mock
+- 修复 Interact client 初始化移出 stores 懒加载
+
+### 重构
+
+- LLM clients 使用 sync.Once 懒初始化
+
+---
+
+## v0.4.0 (2026-04-29)
+
+### 新功能
+
+- **WeCom**: 新增流式消息支持，通过 StreamReplier 接口实现
+- **Channel**: StartStream 移到 StreamChat 之前，改进错误处理
+- **LLM**: 新增按 provider 的 debug 流式响应配置
+- **LLM**: 新增按 provider 的交互日志写入文件
+- **Capability**: 新增 API capability 向量搜索支持
+- **Capability**: 新增 afterUpdated hook 在更新时同步 capability embeddings
+- **Capability**: 新增 skipai tag 支持，导入时跳过/删除标记为 skipai 的 API
+
+### Bug 修复
+
+- 修复 DeepSeek Anthropic 格式兼容性
+- 修复 DeepSeek thinking mode 兼容性
+- 修复 BuildToolSuccessResult 简化为仅支持 embedded tools
+- 修复 capability API 响应体在状态检查前先解码
+- 修复 capability 导入时 skipai tag 大小写不敏感匹配
+- 修复重复的 corpus 向量索引迁移文件
+
+### 重构
+
+- OAuthTokenMiddleware 增加 header fallback 逻辑
+- Capability Responses 使用 SwaggerSchema 结构
+- Capability match 默认 limit 从 5 提高到 6
+- SwaggerParam.Required JSON tag 增加 omitempty
+
+---
+
 ## v0.3.0 (2026-04-02)
 
 ### 新功能
