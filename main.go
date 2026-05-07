@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 
 	"github.com/urfave/cli/v2"
@@ -16,11 +17,12 @@ import (
 
 	"github.com/cupogo/andvari/utils/zlog"
 
-	_ "github.com/liut/morign/pkg/web/api"
+	api "github.com/liut/morign/pkg/web/api"
 
 	"github.com/liut/morign/htdocs"
 	"github.com/liut/morign/pkg/services/llm"
 	"github.com/liut/morign/pkg/services/stores"
+	"github.com/liut/morign/pkg/services/tools"
 	"github.com/liut/morign/pkg/settings"
 	"github.com/liut/morign/pkg/web"
 )
@@ -144,8 +146,8 @@ func agent(cc *cli.Context) error {
 	message := cc.String("message")
 	stream := cc.Bool("stream")
 	verbose := cc.Bool("verbose")
+	interactive := cc.Bool("interactive")
 
-	// 默认关闭日志，根据 verbose 参数决定是否显示
 	if !verbose {
 		cfg := zap.NewProductionConfig()
 		cfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
@@ -153,8 +155,12 @@ func agent(cc *cli.Context) error {
 		zlog.Set(zlogger.Sugar())
 	}
 
-	if message == "" {
+	if !interactive && message == "" {
 		return fmt.Errorf("message is required, use -m flag")
+	}
+
+	if err := stores.InitDB(cc.Context); err != nil {
+		return err
 	}
 
 	client, err := stores.NewLLMClient(&settings.Current.Interact)
@@ -162,37 +168,96 @@ func agent(cc *cli.Context) error {
 		return err
 	}
 
-	ctx := context.Background()
-	messages := []llm.Message{
-		{Role: llm.RoleUser, Content: message},
+	preset, _ := stores.LoadPreset()
+	toolreg := tools.NewRegistry(stores.Sgt(),
+		tools.WithClientInfo(settings.Current.Name, settings.Version()),
+	)
+	toolreg.ApplyToolDescriptions(preset.Tools)
+
+	if err := toolreg.LoadServers(cc.Context, stores.Sgt()); err != nil {
+		logger().Warnw("load MCP servers fail", "err", err)
 	}
 
+	ag := api.NewAgent(client, toolreg, preset.SystemPrompt, preset.ToolsPrompt)
+
+	if interactive {
+		return runInteractive(cc.Context, ag, stream)
+	}
+
+	ctx := cc.Context
+	sysMsg, tools := ag.BuildSystemMessage(ctx)
+	messages := []llm.Message{sysMsg, {Role: llm.RoleUser, Content: message}}
+
 	if stream {
-		ch, err := client.StreamChat(ctx, messages, nil)
+		cb := api.StreamCallbacks{
+			OnDelta: func(delta string) {
+				fmt.Print(delta)
+			},
+		}
+		answer, err := ag.StreamChat(ctx, messages, tools, cb)
 		if err != nil {
 			return fmt.Errorf("stream chat: %w", err)
 		}
-		out := bufio.NewWriter(os.Stdout)
-		for result := range ch {
-			if result.Error != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", result.Error)
-				continue
-			}
-			fmt.Fprint(out, result.Delta)
-			out.Flush()
-			if result.Done {
-				fmt.Fprintln(out)
-			}
-		}
+		_ = answer
+		fmt.Println()
 	} else {
-		result, err := client.Chat(ctx, messages, nil)
+		answer, err := ag.Chat(ctx, messages, tools)
 		if err != nil {
 			return fmt.Errorf("chat: %w", err)
 		}
-		fmt.Println(result.Content)
+		fmt.Println(answer)
 	}
 
 	return nil
+}
+
+func runInteractive(ctx context.Context, ag *api.Agent, stream bool) error {
+	scanner := bufio.NewScanner(os.Stdin)
+	sysMsg, tools := ag.BuildSystemMessage(ctx)
+	messages := []llm.Message{sysMsg}
+
+	fmt.Println("Agent REPL. Type /exit to quit.")
+	for {
+		fmt.Fprint(os.Stdout, "> ")
+		if !scanner.Scan() {
+			break
+		}
+		input := strings.TrimSpace(scanner.Text())
+		if input == "" {
+			continue
+		}
+		if input == "/exit" {
+			break
+		}
+
+		messages = append(messages, llm.Message{Role: llm.RoleUser, Content: input})
+
+		if stream {
+			cb := api.StreamCallbacks{
+				OnDelta: func(delta string) {
+					fmt.Print(delta)
+				},
+			}
+			answer, err := ag.StreamChat(ctx, messages, tools, cb)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "\nerror: %v\n", err)
+				continue
+			}
+			fmt.Println()
+			if answer != "" {
+				messages = append(messages, llm.Message{Role: llm.RoleAssistant, Content: answer})
+			}
+		} else {
+			answer, err := ag.Chat(ctx, messages, tools)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				continue
+			}
+			fmt.Println(answer)
+			messages = append(messages, llm.Message{Role: llm.RoleAssistant, Content: answer})
+		}
+	}
+	return scanner.Err()
 }
 
 func logger() zlog.Logger {
@@ -270,6 +335,7 @@ func main() {
 					&cli.StringFlag{Name: "message", Aliases: []string{"m"}, Usage: "message to send"},
 					&cli.BoolFlag{Name: "stream", Aliases: []string{"s"}, Usage: "enable streaming response"},
 					&cli.BoolFlag{Name: "verbose", Aliases: []string{"v"}, Usage: "show logs"},
+					&cli.BoolFlag{Name: "interactive", Aliases: []string{"i"}, Usage: "interactive REPL mode"},
 				},
 			},
 			{
