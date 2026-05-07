@@ -23,10 +23,6 @@ import (
 	"github.com/liut/morign/pkg/settings"
 	"github.com/liut/morign/pkg/web/resp"
 	"github.com/liut/morign/pkg/web/routes"
-
-	"github.com/liut/morign/pkg/services/channels"
-	"github.com/liut/morign/pkg/services/channels/feishu"
-	"github.com/liut/morign/pkg/services/channels/wecom"
 )
 
 var handles = []handleIn{}
@@ -84,20 +80,7 @@ func newapi(sto stores.Storage) *api {
 	toolreg := tools.NewRegistry(sto, opts...)
 	toolreg.ApplyToolDescriptions(preset.Tools)
 
-	if settings.Current.OAuthPathMCP != "" {
-		sb := mcps.ServerBasic{
-			TransType:  mcps.TransTypeStreamable,
-			Name:       settings.Current.GetOAuthName(),
-			URL:        staffio.GetPrefix() + settings.Current.OAuthPathMCP,
-			HeaderCate: mcps.HeaderCateAuthorization,
-		}
-		mcpsrv := &mcps.Server{ServerBasic: sb}
-		stores.PatchMCPServer(mcpsrv)
-		if err := toolreg.AddServer(context.Background(), mcpsrv); err != nil {
-			logger().Infow("add oauth mcp server fail", "err", err)
-		}
-	}
-
+	// setup shell sandbox MCP
 	if settings.Current.StrataMCPURL != "" {
 		var mcpsrv = mcps.NewServerWithBasic(mcps.ServerBasic{
 			TransType:  mcps.TransTypeStreamable,
@@ -116,11 +99,7 @@ func newapi(sto stores.Storage) *api {
 		logger().Warnw("failed to load MCP servers", "err", err)
 	}
 
-	channels.RegisterChannel("feishu", feishu.New)
-	channels.RegisterChannel("wecom", wecom.New)
-
-	staffio.RegisterStateStore(sto.State())
-
+	// load LLM Client with interact config
 	llmClient, err := stores.NewLLMClient(&settings.Current.Interact)
 	if err != nil {
 		logger().Fatalw("create llm interact client failed", "err", err)
@@ -137,6 +116,26 @@ func newapi(sto stores.Storage) *api {
 
 // Strap 注册路由到 chi.Router
 func (a *api) Strap(router chi.Router) {
+
+	// init MCP for OAuth2
+	if settings.Current.OAuthPathMCP != "" {
+		sb := mcps.ServerBasic{
+			TransType:  mcps.TransTypeStreamable,
+			Name:       settings.Current.GetOAuthName(),
+			URL:        staffio.GetPrefix() + settings.Current.OAuthPathMCP,
+			HeaderCate: mcps.HeaderCateAuthorization,
+		}
+		mcpsrv := &mcps.Server{ServerBasic: sb}
+		stores.PatchMCPServer(mcpsrv)
+		if err := a.toolreg.AddServer(context.Background(), mcpsrv); err != nil {
+			logger().Infow("add oauth mcp server fail", "err", err)
+		}
+	}
+
+	// OAuth2 state store
+	staffio.RegisterStateStore(a.sto.State())
+
+	// setup routes
 	a.router = router
 
 	// staffio 认证路由

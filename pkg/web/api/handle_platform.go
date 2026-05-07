@@ -12,6 +12,8 @@ import (
 	"github.com/liut/morign/pkg/models/aigc"
 	"github.com/liut/morign/pkg/models/channel"
 	"github.com/liut/morign/pkg/services/channels"
+	"github.com/liut/morign/pkg/services/channels/feishu"
+	"github.com/liut/morign/pkg/services/channels/wecom"
 	"github.com/liut/morign/pkg/services/llm"
 	"github.com/liut/morign/pkg/services/stores"
 	"github.com/liut/morign/pkg/services/tools"
@@ -28,6 +30,11 @@ type channelHandler struct {
 
 // InitChannels initializes channel adapters from preset configuration.
 func InitChannels(r chi.Router, preset *aigc.Preset, sto stores.Storage, llmClient llm.Client, toolreg *tools.Registry) error {
+
+	// init Channels
+	channels.RegisterChannel("feishu", feishu.New)
+	channels.RegisterChannel("wecom", wecom.New)
+
 	chandler := &channelHandler{
 		sto:      sto,
 		llm:      llmClient,

@@ -77,7 +77,7 @@ func GetSummary(ctx context.Context, text, tpl string) (summary string, err erro
 	}
 
 	prompt := fmt.Sprintf(tpl, text)
-	result, _, err := llmSu.Generate(ctx, prompt)
+	result, _, err := GetLLMSummarizeClient().Generate(ctx, prompt)
 	if err != nil {
 		logger().Infow("summarize fail", "tpl", tpl, "text", text, "err", err)
 		return
