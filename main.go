@@ -27,6 +27,11 @@ import (
 	"github.com/liut/morign/pkg/web"
 )
 
+const (
+	ansiDim   = "\033[2m"
+	ansiReset = "\033[0m"
+)
+
 func usage(cc *cli.Context) error {
 	return settings.Usage()
 }
@@ -193,6 +198,9 @@ func agent(cc *cli.Context) error {
 			OnDelta: func(delta string) {
 				fmt.Print(delta)
 			},
+			OnThink: func(think string) {
+				fmt.Print(ansiDim + think + ansiReset)
+			},
 		}
 		answer, err := ag.StreamChat(ctx, messages, tools, cb)
 		if err != nil {
@@ -236,6 +244,9 @@ func runInteractive(ctx context.Context, ag *api.Agent, stream bool) error {
 			cb := api.StreamCallbacks{
 				OnDelta: func(delta string) {
 					fmt.Print(delta)
+				},
+				OnThink: func(think string) {
+					fmt.Print(ansiDim + think + ansiReset)
 				},
 			}
 			answer, err := ag.StreamChat(ctx, messages, tools, cb)
