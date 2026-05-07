@@ -24,8 +24,9 @@ import (
 	"github.com/liut/morign/pkg/web/resp"
 	"github.com/liut/morign/pkg/web/routes"
 
-	_ "github.com/liut/morign/pkg/services/channels/feishu"
-	_ "github.com/liut/morign/pkg/services/channels/wecom"
+	"github.com/liut/morign/pkg/services/channels"
+	"github.com/liut/morign/pkg/services/channels/feishu"
+	"github.com/liut/morign/pkg/services/channels/wecom"
 )
 
 var handles = []handleIn{}
@@ -114,6 +115,9 @@ func newapi(sto stores.Storage) *api {
 	if err := toolreg.LoadServers(context.Background(), sto); err != nil {
 		logger().Warnw("failed to load MCP servers", "err", err)
 	}
+
+	channels.RegisterChannel("feishu", feishu.New)
+	channels.RegisterChannel("wecom", wecom.New)
 
 	staffio.RegisterStateStore(sto.State())
 

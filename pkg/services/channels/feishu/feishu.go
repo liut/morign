@@ -4,12 +4,7 @@ import (
 	"fmt"
 
 	"github.com/liut/morign/pkg/models/channel"
-	"github.com/liut/morign/pkg/services/channels"
 )
-
-func init() {
-	channels.RegisterChannel("feishu", New)
-}
 
 // New creates a Feishu channel adapter.
 func New(opts map[string]any) (channel.Channel, error) {

@@ -31,7 +31,6 @@ var registry = &Registry{
 }
 
 // RegisterChannel registers a channel factory under the given name.
-// Each channel package should call this in its init() function.
 func RegisterChannel(name string, factory Factory) {
 	registry.mu.Lock()
 	defer registry.mu.Unlock()
