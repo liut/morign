@@ -51,8 +51,6 @@ type api struct {
 	preset   aigc.Preset
 	toolreg  *tools.Registry
 	toolExec *ToolExecutor
-
-	router chi.Router // 用于平台 HTTP 回调注册
 }
 
 func init() {
@@ -136,7 +134,6 @@ func (a *api) Strap(router chi.Router) {
 	staffio.RegisterStateStore(a.sto.State())
 
 	// setup routes
-	a.router = router
 
 	// staffio 认证路由
 	router.Get(authLoginPath, staffio.LoginHandler)
@@ -196,7 +193,7 @@ func (a *api) Strap(router chi.Router) {
 	})
 
 	// 初始化平台适配器（HTTP webhook 回调等）
-	if err := InitChannels(a.router, &a.preset, a.sto, a.llm, a.toolreg); err != nil {
+	if err := InitChannels(router, &a.preset, a.sto, a.llm, a.toolreg); err != nil {
 		logger().Warnw("init channels failed", "err", err)
 	}
 
