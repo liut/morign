@@ -22,7 +22,6 @@ import (
 	"github.com/liut/morign/pkg/services/llm"
 	"github.com/liut/morign/pkg/services/stores"
 	"github.com/liut/morign/pkg/services/tools"
-	toolsvc "github.com/liut/morign/pkg/services/tools"
 	"github.com/liut/morign/pkg/settings"
 	"github.com/liut/morign/pkg/utils/words"
 )
@@ -383,7 +382,7 @@ func (a *api) chatStreamResponseLoop(ccr *chatRequest, w http.ResponseWriter, r 
 
 		var hasToolCall bool
 		// 执行工具调用，传入 reasoning_content 以便回传
-		ccr.messages, hasToolCall = a.doExecuteToolCalls(cctx, streamRes.toolCalls, ccr.messages, streamRes.think)
+		ccr.messages, hasToolCall = a.toolExec.ExecuteToolCalls(cctx, ccr.messages, streamRes.toolCalls, streamRes.think)
 		logger().Infow("executed tool calls", "hasToolCall", hasToolCall, "msgs", len(ccr.messages))
 		if !hasToolCall {
 			// 没有成功执行任何工具，跳出循环
@@ -498,59 +497,6 @@ func (a *api) doChatStream(ccr *chatRequest, w http.ResponseWriter, r *http.Requ
 	logger().Infow("chat stream done", "finish", res.finish, "answer", len(res.answer),
 		"ahead", cutTxt(res.answer, 20))
 	return res
-}
-
-// doExecuteToolCalls 执行工具调用，返回更新后的 messages 和是否有成功执行的工具
-// think 参数用于 DeepSeek thinking mode，需要在工具调用时回传 reasoning_content
-func (a *api) doExecuteToolCalls(ctx context.Context, toolCalls []llm.ToolCall, messages []llm.Message, think string) ([]llm.Message, bool) {
-	if len(toolCalls) == 0 {
-		return messages, false
-	}
-
-	messages = append(messages, llm.Message{
-		Role:      llm.RoleAssistant,
-		Thinking:  think,
-		ToolCalls: toolCalls,
-	})
-
-	var hasToolCall bool
-	for _, tc := range toolCalls {
-		logger().Infow("chat", "toolCallID", tc.ID, "toolCallType", tc.Type, "toolCallName", tc.Function.Name)
-
-		if tc.Type != "function" {
-			continue
-		}
-
-		var parameters map[string]any
-		args := string(tc.Function.Arguments)
-		if args != "" && args != "{}" {
-			if err := json.Unmarshal(tc.Function.Arguments, &parameters); err != nil {
-				logger().Infow("chat", "toolCallID", tc.ID, "args", args, "err", err)
-				continue
-			}
-		}
-		// 空参数时使用空 map
-		if parameters == nil {
-			parameters = make(map[string]any)
-		}
-
-		content, err := a.toolreg.Invoke(ctx, tc.Function.Name, parameters)
-		if err != nil {
-			logger().Infow("invokeTool fail", "toolCallName", tc.Function.Name, "err", err)
-			continue
-		}
-
-		logger().Infow("invokeTool ok", "toolCallName", tc.Function.Name,
-			"content", toolsvc.ResultLogs(content))
-		messages = append(messages, llm.Message{
-			Role:       llm.RoleTool,
-			Content:    formatToolResult(content),
-			ToolCallID: tc.ID,
-		})
-		hasToolCall = true
-	}
-
-	return messages, hasToolCall
 }
 
 // @Tags 聊天

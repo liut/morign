@@ -39,45 +39,57 @@ func (e *ToolExecutor) ExecuteToolCallLoop(
 			return answer, nil, usage, nil
 		}
 
-		// 添加 assistant 消息（带 tool calls）
-		messages = append(messages, llm.Message{
-			Role:      llm.RoleAssistant,
-			ToolCalls: toolCalls,
-		})
-
-		// 执行工具调用
-		for _, tc := range toolCalls {
-			logger().Infow("chat", "toolCallID", tc.ID, "toolCallType", tc.Type, "toolCallName", tc.Function.Name)
-
-			if tc.Type != "function" {
-				continue
-			}
-
-			var parameters map[string]any
-			args := string(tc.Function.Arguments)
-			if args != "" && args != "{}" {
-				if err := json.Unmarshal(tc.Function.Arguments, &parameters); err != nil {
-					logger().Infow("chat", "toolCallID", tc.ID, "args", args, "err", err)
-					continue
-				}
-			}
-			if parameters == nil {
-				parameters = make(map[string]any)
-			}
-
-			content, err := e.toolreg.Invoke(ctx, tc.Function.Name, parameters)
-			if err != nil {
-				logger().Infow("invokeTool fail", "toolCallName", tc.Function.Name, "err", err)
-				continue
-			}
-
-			logger().Infow("invokeTool ok", "toolCallName", tc.Function.Name,
-				"content", toolsvc.ResultLogs(content))
-			messages = append(messages, llm.Message{
-				Role:       llm.RoleTool,
-				Content:    formatToolResult(content),
-				ToolCallID: tc.ID,
-			})
-		}
+		messages, _ = e.ExecuteToolCalls(ctx, messages, toolCalls, "")
 	}
+}
+
+// ExecuteToolCalls 执行单轮工具调用，think 用于 DeepSeek reasoning_content 回传
+func (e *ToolExecutor) ExecuteToolCalls(ctx context.Context, messages []llm.Message, toolCalls []llm.ToolCall, think string) ([]llm.Message, bool) {
+	if len(toolCalls) == 0 {
+		return messages, false
+	}
+
+	messages = append(messages, llm.Message{
+		Role:      llm.RoleAssistant,
+		Thinking:  think,
+		ToolCalls: toolCalls,
+	})
+
+	var hasToolCall bool
+	for _, tc := range toolCalls {
+		logger().Infow("chat", "toolCallID", tc.ID, "toolCallType", tc.Type, "toolCallName", tc.Function.Name)
+
+		if tc.Type != "function" {
+			continue
+		}
+
+		var parameters map[string]any
+		args := string(tc.Function.Arguments)
+		if args != "" && args != "{}" {
+			if err := json.Unmarshal(tc.Function.Arguments, &parameters); err != nil {
+				logger().Infow("chat", "toolCallID", tc.ID, "args", args, "err", err)
+				continue
+			}
+		}
+		if parameters == nil {
+			parameters = make(map[string]any)
+		}
+
+		content, err := e.toolreg.Invoke(ctx, tc.Function.Name, parameters)
+		if err != nil {
+			logger().Infow("invokeTool fail", "toolCallName", tc.Function.Name, "err", err)
+			continue
+		}
+
+		logger().Infow("invokeTool ok", "toolCallName", tc.Function.Name,
+			"content", toolsvc.ResultLogs(content))
+		messages = append(messages, llm.Message{
+			Role:       llm.RoleTool,
+			Content:    formatToolResult(content),
+			ToolCallID: tc.ID,
+		})
+		hasToolCall = true
+	}
+
+	return messages, hasToolCall
 }

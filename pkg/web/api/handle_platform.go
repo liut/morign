@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"strings"
 	"time"
@@ -219,7 +218,7 @@ func (chh *channelHandler) handleStreamingReply(ctx context.Context, p channel.C
 
 		// Execute tool calls and update messages with results
 		var hasToolCall bool
-		messages, hasToolCall = chh.executeChannelToolCalls(ctx, messages, toolCalls)
+		messages, hasToolCall = chh.toolExec.ExecuteToolCalls(ctx, messages, toolCalls, "")
 		if !hasToolCall {
 			break
 		}
@@ -299,56 +298,6 @@ func (chh *channelHandler) doChannelStream(ctx context.Context, p channel.Channe
 	// Stream ended (EOF). If Done was never true, there are no tool calls.
 	// currentToolCalls remains nil, which is correct.
 	return contentBuilder.String(), currentToolCalls, nil
-}
-
-// executeChannelToolCalls executes tool calls and appends results to messages.
-// Returns updated messages slice and whether any tool was successfully executed.
-func (chh *channelHandler) executeChannelToolCalls(ctx context.Context, messages []llm.Message, toolCalls []llm.ToolCall) ([]llm.Message, bool) {
-	slog.Info("channel: executing tool calls", "count", len(toolCalls))
-
-	if len(toolCalls) == 0 {
-		return messages, false
-	}
-
-	// First append the assistant message with tool calls
-	messages = append(messages, llm.Message{
-		Role:      llm.RoleAssistant,
-		ToolCalls: toolCalls,
-	})
-
-	hasToolCall := false
-	for _, tc := range toolCalls {
-		if tc.Type != "function" {
-			continue
-		}
-
-		var parameters map[string]any
-		args := string(tc.Function.Arguments)
-		if args != "" && args != "{}" {
-			if err := json.Unmarshal(tc.Function.Arguments, &parameters); err != nil {
-				slog.Warn("channel: unmarshal tool args failed", "err", err)
-				continue
-			}
-		}
-		if parameters == nil {
-			parameters = make(map[string]any)
-		}
-
-		content, err := chh.toolreg.Invoke(ctx, tc.Function.Name, parameters)
-		if err != nil {
-			slog.Warn("channel: invoke tool failed", "tool", tc.Function.Name, "err", err)
-			continue
-		}
-
-		messages = append(messages, llm.Message{
-			Role:       llm.RoleTool,
-			Content:    formatToolResult(content),
-			ToolCallID: tc.ID,
-		})
-		hasToolCall = true
-	}
-
-	return messages, hasToolCall
 }
 
 // handleRegularReply handles reply without streaming (non-WebSocket channels).
