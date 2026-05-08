@@ -28,7 +28,7 @@ import (
 )
 
 const (
-	ansiDim   = "\033[2m"
+	ansiThink = "\033[2;3m"
 	ansiReset = "\033[0m"
 )
 
@@ -199,7 +199,7 @@ func agent(cc *cli.Context) error {
 				fmt.Print(delta)
 			},
 			OnThink: func(think string) {
-				fmt.Print(ansiDim + think + ansiReset)
+				fmt.Print(ansiThink + think + ansiReset)
 			},
 		}
 		answer, err := ag.StreamChat(ctx, messages, tools, cb)
@@ -246,7 +246,7 @@ func runInteractive(ctx context.Context, ag *api.Agent, stream bool) error {
 					fmt.Print(delta)
 				},
 				OnThink: func(think string) {
-					fmt.Print(ansiDim + think + ansiReset)
+					fmt.Print(ansiThink + think + ansiReset)
 				},
 			}
 			answer, err := ag.StreamChat(ctx, messages, tools, cb)
