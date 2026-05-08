@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.5.0 (2026-05-08)
+
+### 新功能
+
+- **Agent CLI**: 新增工具调用支持和交互式 REPL 模式（`-i`），复用 ToolExecutor 工具调用循环
+- **Agent CLI**: 流式模式下 thinking/reasoning 内容以 ANSI dim 样式区分显示
+
+### 重构
+
+- 提取 `ExecuteToolCalls` 共享方法，消除三处工具调用重复逻辑
+- 移除 api struct 中未使用的 router 字段
+- 将 channels 初始化从 `newapi` 移至 `Strap`/`InitChannels`
+- Channels (飞书/企业微信) 改为显式注册
+
+---
+
 ## v0.4.1 (2026-05-07)
 
 ### Bug 修复
