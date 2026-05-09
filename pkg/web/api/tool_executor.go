@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/liut/morign/pkg/services/llm"
 	"github.com/liut/morign/pkg/services/tools"
@@ -39,14 +40,19 @@ func (e *ToolExecutor) ExecuteToolCallLoop(
 			return answer, nil, usage, nil
 		}
 
-		messages, _ = e.ExecuteToolCalls(ctx, messages, toolCalls, "")
+		evs, msgs := e.ExecuteToolCalls(ctx, messages, toolCalls, "")
+		messages = msgs
+		if len(evs) == 0 {
+			// 没有成功执行任何工具，跳出循环
+			return answer, toolCalls, usage, nil
+		}
 	}
 }
 
-// ExecuteToolCalls 执行单轮工具调用，think 用于 DeepSeek reasoning_content 回传
-func (e *ToolExecutor) ExecuteToolCalls(ctx context.Context, messages []llm.Message, toolCalls []llm.ToolCall, think string) ([]llm.Message, bool) {
+// ExecuteToolCalls 执行单轮工具调用，返回事件列表和更新后的消息。
+func (e *ToolExecutor) ExecuteToolCalls(ctx context.Context, messages []llm.Message, toolCalls []llm.ToolCall, think string) ([]*llm.Event, []llm.Message) {
 	if len(toolCalls) == 0 {
-		return messages, false
+		return nil, messages
 	}
 
 	messages = append(messages, llm.Message{
@@ -55,7 +61,7 @@ func (e *ToolExecutor) ExecuteToolCalls(ctx context.Context, messages []llm.Mess
 		ToolCalls: toolCalls,
 	})
 
-	var hasToolCall bool
+	var events []*llm.Event
 	for _, tc := range toolCalls {
 		logger().Infow("chat", "toolCallID", tc.ID, "toolCallType", tc.Type, "toolCallName", tc.Function.Name)
 
@@ -83,13 +89,24 @@ func (e *ToolExecutor) ExecuteToolCalls(ctx context.Context, messages []llm.Mess
 
 		logger().Infow("invokeTool ok", "toolCallName", tc.Function.Name,
 			"content", toolsvc.ResultLogs(content))
+		toolResult := formatToolResult(content)
 		messages = append(messages, llm.Message{
 			Role:       llm.RoleTool,
-			Content:    formatToolResult(content),
+			Content:    toolResult,
 			ToolCallID: tc.ID,
 		})
-		hasToolCall = true
+
+		events = append(events, &llm.Event{
+			ID:        llm.NewEventID(),
+			Timestamp: time.Now(),
+			Author:    tc.Function.Name,
+			ToolResult: &llm.ToolResult{
+				CallID:  tc.ID,
+				Name:    tc.Function.Name,
+				Content: toolResult,
+			},
+		})
 	}
 
-	return messages, hasToolCall
+	return events, messages
 }

@@ -27,6 +27,7 @@ package stores
 import (
 	"context"
 	"fmt"
+	"iter"
 	"math/rand"
 	"os"
 	"testing"
@@ -45,8 +46,8 @@ func (m *mockEmbeddingClient) Chat(ctx context.Context, messages []llm.Message, 
 	return nil, nil
 }
 
-func (m *mockEmbeddingClient) StreamChat(ctx context.Context, messages []llm.Message, tools []llm.ToolDefinition) (<-chan llm.StreamResult, error) {
-	return nil, nil
+func (m *mockEmbeddingClient) StreamChat(ctx context.Context, messages []llm.Message, tools []llm.ToolDefinition) iter.Seq2[*llm.Event, error] {
+	return func(yield func(*llm.Event, error) bool) {}
 }
 
 func (m *mockEmbeddingClient) Generate(ctx context.Context, prompt string) (string, *llm.Usage, error) {
@@ -337,4 +338,102 @@ func TestIntegration_ListMemories(t *testing.T) {
 	}
 
 	t.Logf("Total memories: %d, returned: %d", total, len(data))
+}
+
+func TestIntegration_HistoryStoreAppendEvent(t *testing.T) {
+	sto := Sgt()
+	ctx := context.Background()
+
+	sessionID := oid.NewID(oid.OtEvent).String()
+	hs := NewHistoryStore(sto)
+
+	event := &llm.Event{
+		Author:  "assistant",
+		Delta: "Hello, this is a test response",
+		Think:   "The user is testing",
+	}
+
+	if err := hs.AppendEvent(ctx, sessionID, event); err != nil {
+		t.Fatalf("AppendEvent failed: %v", err)
+	}
+
+	// Verify history was written
+	cs := NewConversation(ctx, sessionID)
+	history, err := cs.ListHistory(ctx)
+	if err != nil {
+		t.Fatalf("ListHistory failed: %v", err)
+	}
+	if len(history) == 0 {
+		t.Fatal("expected at least one history item")
+	}
+	found := false
+	for _, h := range history {
+		if h.ChatItem != nil && h.ChatItem.Assistant == event.Delta {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("history item with content %q not found", event.Delta)
+	}
+
+	// Cleanup
+	_ = cs.ClearHistory(ctx)
+}
+
+func TestIntegration_HistoryStoreCreateUsageRecord(t *testing.T) {
+	sto := Sgt()
+	ctx := context.Background()
+
+	sessionID := oid.NewID(oid.OtEvent).String()
+	hs := NewHistoryStore(sto)
+
+	event := &llm.Event{
+		Usage:    &llm.Usage{InputTokens: 100, OutputTokens: 50, TotalTokens: 150},
+		Model:    "test-model",
+		MsgCount: 3,
+	}
+
+	if err := hs.CreateUsageRecord(ctx, sessionID, event); err != nil {
+		t.Fatalf("CreateUsageRecord failed: %v", err)
+	}
+
+	spec := &ConvoUsageRecordSpec{}
+	spec.Limit = 1
+	data, total, err := sto.Convo().ListUsageRecord(ctx, spec)
+	if err != nil {
+		t.Fatalf("ListUsageRecord failed: %v", err)
+	}
+	t.Logf("Total usage records: %d", total)
+	_ = data
+}
+
+func TestIntegration_SessionStoreMergeDelta(t *testing.T) {
+	sto := Sgt()
+	ctx := context.Background()
+
+	sess := convo.NewSessionWithBasic(convo.SessionBasic{
+		Title: "test-session-delta",
+	})
+	if err := sto.Convo().SaveSession(ctx, sess); err != nil {
+		t.Fatalf("SaveSession failed: %v", err)
+	}
+	sessionID := sess.StringID()
+
+	ss := NewSessionStore(sto)
+	delta := map[string]any{
+		"last_tool": "kb_search",
+		"count":     3,
+	}
+
+	if err := ss.MergeDelta(ctx, sessionID, delta); err != nil {
+		t.Fatalf("MergeDelta failed: %v", err)
+	}
+
+	updated, err := sto.Convo().GetSession(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("GetSession failed: %v", err)
+	}
+	_ = updated
+	t.Logf("Session meta updated for %s", sessionID)
 }

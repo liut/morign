@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"iter"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 )
 
 const anthropicVersion = "2023-06-01"
@@ -115,13 +117,9 @@ func (p *anthropicProvider) Chat(ctx context.Context, cfg *config, messages []Me
 	return result, nil
 }
 
-func (p *anthropicProvider) StreamChat(ctx context.Context, cfg *config, messages []Message, tools []ToolDefinition) (<-chan StreamResult, error) {
-	ch := make(chan StreamResult, 100)
+func (p *anthropicProvider) StreamChat(ctx context.Context, cfg *config, messages []Message, tools []ToolDefinition) iter.Seq2[*Event, error] {
 
-	go func() {
-		defer close(ch)
-
-		// 构建请求
+	return func(yield func(*Event, error) bool) {
 		endpoint := anthropicMessagesEndpoint(cfg.baseURL)
 		anthropicMessages, systemText := toAnthropicMessages(messages)
 
@@ -144,7 +142,7 @@ func (p *anthropicProvider) StreamChat(ctx context.Context, cfg *config, message
 		if len(tools) > 0 {
 			converted, err := toAnthropicTools(tools)
 			if err != nil {
-				ch <- StreamResult{Error: err}
+				yield(nil, err)
 				return
 			}
 			reqBody.Tools = converted
@@ -160,19 +158,17 @@ func (p *anthropicProvider) StreamChat(ctx context.Context, cfg *config, message
 			"messages", MessagesLogged(messages),
 		)
 
-		// 序列化请求体，保存用于错误时打印
 		reqBodyBytes, err := json.Marshal(reqBody)
 		if err != nil {
 			logger().Warnw("marshal stream request failed", "err", err)
-			ch <- StreamResult{Error: err}
+			yield(nil, err)
 			return
 		}
 
-		// 构建请求
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(reqBodyBytes))
 		if err != nil {
 			logger().Warnw("create stream request failed", "err", err, "reqBody", string(reqBodyBytes))
-			ch <- StreamResult{Error: err}
+			yield(nil, err)
 			return
 		}
 
@@ -185,7 +181,6 @@ func (p *anthropicProvider) StreamChat(ctx context.Context, cfg *config, message
 			req.Header.Set(k, v)
 		}
 
-		// 发送请求
 		hc := cfg.httpClient
 		if hc == nil {
 			hc = &http.Client{Timeout: 0}
@@ -194,7 +189,7 @@ func (p *anthropicProvider) StreamChat(ctx context.Context, cfg *config, message
 		resp, err := hc.Do(req)
 		if err != nil {
 			logger().Warnw("stream request failed", "err", err, "reqBody", string(reqBodyBytes))
-			ch <- StreamResult{Error: err}
+			yield(nil, err)
 			return
 		}
 
@@ -202,31 +197,35 @@ func (p *anthropicProvider) StreamChat(ctx context.Context, cfg *config, message
 			fmt.Fprintf(os.Stderr, "\n%s\n%d bytes\n", string(reqBodyBytes), len(reqBodyBytes))
 		}
 
-		// 检查响应状态码
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 			resp.Body.Close()
 			errMsg := fmt.Errorf("http %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 			logger().Warnw("stream response error",
 				"status", resp.StatusCode,
-				// "reqBody", string(reqBodyBytes),
 				"respBody", string(respBody))
-			ch <- StreamResult{Error: errMsg}
+			yield(nil, errMsg)
 			return
 		}
 		defer resp.Body.Close()
 
-		// 解析流响应
-		if err := p.parseStreamResponse(resp.Body, ch, cfg.debug, cfg.logDir, cfg.model, messages, tools); err != nil {
-			ch <- StreamResult{Error: err}
+		// pusher 适配：补全 author 后直接 yield
+		push := func(event *Event, err error) bool {
+			if err != nil {
+				return yield(nil, err)
+			}
+			event.Author = "assistant"
+			return yield(event, nil)
 		}
-	}()
 
-	return ch, nil
+		if err := p.parseStreamResponse(resp.Body, push, cfg.debug, cfg.logDir, cfg.model, messages, tools); err != nil {
+			yield(nil, err)
+		}
+	}
 }
 
-// parseStreamResponse 解析流式响应
-func (p *anthropicProvider) parseStreamResponse(body io.Reader, ch chan<- StreamResult, debug bool, logDir, model string, messages []Message, tools []ToolDefinition) error {
+// parseStreamResponse 解析流式响应，通过 push 直接产出 *Event。
+func (p *anthropicProvider) parseStreamResponse(body io.Reader, push Pusher, debug bool, logDir, model string, messages []Message, tools []ToolDefinition) error {
 	var currentToolCalls []ToolCall
 	var currentText strings.Builder
 	var thinkContent string
@@ -237,7 +236,7 @@ func (p *anthropicProvider) parseStreamResponse(body io.Reader, ch chan<- Stream
 		line, err := bufReader.ReadBytes('\n')
 		if err != nil {
 			if err == io.EOF {
-				ch <- StreamResult{Done: true}
+				push(&Event{Done: true}, nil)
 			} else {
 				logger().Infow("read stream response failed", "err", err)
 				return fmt.Errorf("read: %w", err)
@@ -261,22 +260,20 @@ func (p *anthropicProvider) parseStreamResponse(body io.Reader, ch chan<- Stream
 
 		data := bytes.TrimSpace(line[5:])
 		if string(data) == "[DONE]" {
-			ch <- StreamResult{Done: true}
+			push(&Event{Done: true}, nil)
 			return nil
 		}
 
-		event, err := p.parseStreamEvent(data)
+		se, err := p.parseStreamEvent(data)
 		if err != nil {
 			continue
 		}
-		// logger().Debugw("stream event parsed", "type", event.Type, "index", event.Index,
-		// 	"delta", &event.Delta)
 
-		done, toolCalls := p.handleStreamEvent(event, &currentText, currentToolCalls, ch, logDir, model, messages, tools, &thinkContent)
+		done, toolCalls := p.handleStreamEvent(se, &currentText, currentToolCalls, push, logDir, model, messages, tools, &thinkContent)
 		currentToolCalls = toolCalls
 
 		if done {
-			logger().Infow("stream done", "event_type", event.Type, "tool_calls_count", len(currentToolCalls))
+			logger().Infow("stream done", "event_type", se.Type, "tool_calls_count", len(currentToolCalls))
 			return nil
 		}
 	}
@@ -336,47 +333,59 @@ func (p *anthropicProvider) parseStreamEvent(data []byte) (streamEvent, error) {
 	return event, nil
 }
 
-// handleStreamEvent 处理流事件，返回是否结束及更新后的 toolCalls
-func (p *anthropicProvider) handleStreamEvent(event streamEvent, currentText *strings.Builder, currentToolCalls []ToolCall, ch chan<- StreamResult, logDir, model string, messages []Message, tools []ToolDefinition, thinkContent *string) (bool, []ToolCall) {
-	switch event.Type {
+// handleStreamEvent 处理流事件，通过 push 直接产出 *Event。返回是否结束及更新后的 toolCalls。
+func (p *anthropicProvider) handleStreamEvent(se streamEvent, currentText *strings.Builder, currentToolCalls []ToolCall,
+	push Pusher, logDir, model string, messages []Message, tools []ToolDefinition, thinkContent *string) (
+	bool, []ToolCall) {
+	switch se.Type {
 	case "content_block_start":
-		// 开始新的内容块，检查是否是 tool_use 类型
-		if event.ContentBlock != nil && event.ContentBlock.Type == "tool_use" {
-			toolID := event.ContentBlock.ID
+			// 开始新的内容块，检查是否是 tool_use 类型
+		if se.ContentBlock != nil && se.ContentBlock.Type == "tool_use" {
+			toolID := se.ContentBlock.ID
 			if toolID == "" {
-				toolID = fmt.Sprintf("toolu_%d", event.Index)
+				toolID = fmt.Sprintf("toolu_%d", se.Index)
 			}
 			currentToolCalls = append(currentToolCalls, ToolCall{
 				ID:   toolID,
 				Type: "function",
 				Function: ToolCallFunc{
-					Name: event.ContentBlock.Name,
+					Name: se.ContentBlock.Name,
 				},
 			})
-			logger().Debugw("tool_use started", "id", toolID, "name", event.ContentBlock.Name)
+			logger().Debugw("tool_use started", "id", toolID, "name", se.ContentBlock.Name)
 		}
 	case "content_block_delta":
-		if event.Delta.Type == "text_delta" {
-			currentText.WriteString(event.Delta.Text)
-			ch <- StreamResult{
-				Delta:     event.Delta.Text,
+		if se.Delta.Type == "text_delta" {
+			currentText.WriteString(se.Delta.Text)
+			if !push(&Event{
+				ID:        NewEventID(),
+				Timestamp: time.Now(),
+				Delta:     se.Delta.Text,
 				ToolCalls: currentToolCalls,
+
+			}, nil) {
+				return true, currentToolCalls
 			}
-		} else if event.Delta.Type == "thinking_delta" {
-			*thinkContent += event.Delta.Thinking
-			// thinking 独立于 tool_use，不附带正在构建的 tool_calls
-			ch <- StreamResult{
-				Think: event.Delta.Thinking,
+		} else if se.Delta.Type == "thinking_delta" {
+			*thinkContent += se.Delta.Thinking
+				// thinking 独立于 tool_use，不附带正在构建的 tool_calls
+			if !push(&Event{
+				ID:        NewEventID(),
+				Timestamp: time.Now(),
+				Think:     se.Delta.Thinking,
+
+			}, nil) {
+				return true, currentToolCalls
 			}
-		} else if event.Delta.Type == "input_json_delta" {
-			// 处理 tool_use 的参数，直接取最后一个 tool_call
-			if len(currentToolCalls) > 0 && event.Delta.PartialJSON != "" {
+		} else if se.Delta.Type == "input_json_delta" {
+				// 处理 tool_use 的参数，直接取最后一个 tool_call
+			if len(currentToolCalls) > 0 && se.Delta.PartialJSON != "" {
 				lastIdx := len(currentToolCalls) - 1
-				// 跳过 thinking 相关字段（thinking_delta 伴随 input_json_delta 出现，但不属于 tool_use 参数）
-				if !strings.HasPrefix(strings.TrimSpace(event.Delta.PartialJSON), "\"thinking") {
+					// 跳过 thinking 相关字段（thinking_delta 伴随 input_json_delta 出现，但不属于 tool_use 参数）
+				if !strings.HasPrefix(strings.TrimSpace(se.Delta.PartialJSON), "\"thinking") {
 					currentToolCalls[lastIdx].Function.Arguments = append(
 						currentToolCalls[lastIdx].Function.Arguments,
-						event.Delta.PartialJSON...,
+						se.Delta.PartialJSON...,
 					)
 				}
 			}
@@ -384,25 +393,28 @@ func (p *anthropicProvider) handleStreamEvent(event streamEvent, currentText *st
 	case "content_block_stop":
 		// 内容块结束
 	case "message_delta":
-		stopReason := FinishReason(event.Delta.StopReason)
+		stopReason := FinishReason(se.Delta.StopReason)
 		if stopReason == "end_turn" {
 			stopReason = "stop"
-		} else if len(currentToolCalls) > 0 { // 检查是否有 tool_calls
+		} else if len(currentToolCalls) > 0 {
 			stopReason = "tool_calls" // 为了兼容 OpenAI
 		}
-		// 发送完成信号
-		ch <- StreamResult{
-			ToolCalls:    currentToolCalls,
-			FinishReason: stopReason,
-			Usage:        event.Usage.toUsage(),
+		if !push(&Event{
+			ID:         NewEventID(),
+			Timestamp:  time.Now(),
+			ToolCalls:  currentToolCalls,
+			StopReason: stopReason,
+			Usage:      se.Usage.toUsage(),
+
+		}, nil) {
+			return true, currentToolCalls
 		}
-		// 写入交互日志
 		if logDir != "" {
 			go LogInteraction(logDir, "anthropic", &InteractionLog{
 				Model:      model,
 				Messages:   messages,
 				Tools:      tools,
-				Usage:      event.Usage.toUsage(),
+				Usage:      se.Usage.toUsage(),
 				Response:   currentText.String(),
 				ToolCalls:  currentToolCalls,
 				Think:      *thinkContent,
@@ -410,23 +422,27 @@ func (p *anthropicProvider) handleStreamEvent(event streamEvent, currentText *st
 			})
 		}
 	case "message_stop": // 在 message_delta 后会跟一个message_stop，里面没有实际信息
-		ch <- StreamResult{
-			Done:      true,
+		push(&Event{
+			ID:        NewEventID(),
+			Timestamp: time.Now(),
+			Done: true,
 			ToolCalls: currentToolCalls,
-		}
+		}, nil)
 		return true, currentToolCalls
 	case "message_start":
-		if event.Message != nil {
-			ch <- StreamResult{
-				Model:      event.Message.Model,
-				ResponseID: event.Message.ID,
-			}
+		if se.Message != nil {
+			push(&Event{
+				ID:         NewEventID(),
+				Timestamp:  time.Now(),
+				Model:      se.Message.Model,
+				ResponseID: se.Message.ID,
+
+			}, nil)
 		}
-		// 忽略
 	case "ping":
 		// 忽略
 	default:
-		logger().Infow("unknown anthropic event type", "type", event.Type)
+		logger().Infow("unknown anthropic event type", "type", se.Type)
 	}
 	return false, currentToolCalls
 }

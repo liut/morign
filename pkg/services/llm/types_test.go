@@ -200,23 +200,6 @@ func TestChatResultHasToolCalls(t *testing.T) {
 	}
 }
 
-func TestStreamResultString(t *testing.T) {
-	// 测试 StreamResult 类型（用于覆盖）
-	result := StreamResult{
-		Delta:     "Hello",
-		ToolCalls: nil,
-		Done:      false,
-		Error:     nil,
-	}
-
-	_ = result
-
-	// 验证 Done 和 Error
-	result.Done = true
-	if !result.Done {
-		t.Error("expected Done to be true")
-	}
-}
 
 func TestMessagesLogged_String(t *testing.T) {
 	tests := []struct {

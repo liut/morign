@@ -204,22 +204,15 @@ func TestAnthropicProviderStreamChat(t *testing.T) {
 		model:   "claude-3-5-sonnet-20241022",
 	}
 
-	ch, err := p.StreamChat(context.Background(), cfg, []Message{
+	var results []*Event
+	for event, err := range p.StreamChat(context.Background(), cfg, []Message{
 		{Role: RoleUser, Content: "Hi"},
-	}, nil)
-
-	if err != nil {
-		t.Errorf("StreamChat() error = %v", err)
-		return
-	}
-
-	var results []StreamResult
-	for result := range ch {
-		if result.Error != nil {
-			t.Errorf("stream error = %v", result.Error)
+	}, nil) {
+		if err != nil {
+			t.Errorf("stream error = %v", err)
 			break
 		}
-		results = append(results, result)
+		results = append(results, event)
 	}
 
 	if len(results) == 0 {
