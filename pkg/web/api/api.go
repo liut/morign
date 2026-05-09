@@ -18,6 +18,7 @@ import (
 	"github.com/liut/morign/pkg/models/aigc"
 	"github.com/liut/morign/pkg/models/mcps"
 	"github.com/liut/morign/pkg/services/llm"
+	"github.com/liut/morign/pkg/services/runner"
 	"github.com/liut/morign/pkg/services/stores"
 	"github.com/liut/morign/pkg/services/tools"
 	"github.com/liut/morign/pkg/settings"
@@ -51,6 +52,7 @@ type api struct {
 	preset   aigc.Preset
 	toolreg  *tools.Registry
 	toolExec *ToolExecutor
+	rnr      *runner.Runner
 }
 
 func init() {
@@ -102,13 +104,13 @@ func newapi(sto stores.Storage) *api {
 	if err != nil {
 		logger().Fatalw("create llm interact client failed", "err", err)
 	}
-
 	return &api{
 		sto:      sto,
 		llm:      llmClient,
 		preset:   preset,
 		toolreg:  toolreg,
 		toolExec: NewToolExecutor(toolreg),
+		rnr:      runner.New(stores.NewSessionStore(sto), stores.NewHistoryStore(sto)),
 	}
 }
 

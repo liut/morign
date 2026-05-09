@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"strings"
 )
 
@@ -14,8 +15,8 @@ var ErrUnsupportedProvider = errors.New("unsupported provider")
 type Client interface {
 	// Chat 发送聊天请求，返回完整响应
 	Chat(ctx context.Context, messages []Message, tools []ToolDefinition) (*ChatResult, error)
-	// StreamChat 发送流式聊天请求，返回流式响应
-	StreamChat(ctx context.Context, messages []Message, tools []ToolDefinition) (<-chan StreamResult, error)
+	// StreamChat 发送流式聊天请求，返回 iter.Seq2 事件流
+	StreamChat(ctx context.Context, messages []Message, tools []ToolDefinition) iter.Seq2[*Event, error]
 	// Generate 简单文本生成（用于关键词提取等）
 	Generate(ctx context.Context, prompt string) (string, *Usage, error)
 	// Embedding 向量化文本
@@ -31,7 +32,7 @@ type client struct {
 // provider 接口定义
 type provider interface {
 	Chat(ctx context.Context, cfg *config, messages []Message, tools []ToolDefinition) (*ChatResult, error)
-	StreamChat(ctx context.Context, cfg *config, messages []Message, tools []ToolDefinition) (<-chan StreamResult, error)
+	StreamChat(ctx context.Context, cfg *config, messages []Message, tools []ToolDefinition) iter.Seq2[*Event, error]
 	Generate(ctx context.Context, cfg *config, prompt string) (string, *Usage, error)
 	Embedding(ctx context.Context, cfg *config, texts []string) ([]float64, error)
 }
@@ -68,8 +69,8 @@ func (c *client) Chat(ctx context.Context, messages []Message, tools []ToolDefin
 	return c.provider.Chat(ctx, c.cfg, messages, tools)
 }
 
-// StreamChat 发送流式聊天请求
-func (c *client) StreamChat(ctx context.Context, messages []Message, tools []ToolDefinition) (<-chan StreamResult, error) {
+// StreamChat 发送流式聊天请求，返回 iter.Seq2 事件流
+func (c *client) StreamChat(ctx context.Context, messages []Message, tools []ToolDefinition) iter.Seq2[*Event, error] {
 	return c.provider.StreamChat(ctx, c.cfg, messages, tools)
 }
 

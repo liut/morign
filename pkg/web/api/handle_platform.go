@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/liut/morign/pkg/services/channels/feishu"
 	"github.com/liut/morign/pkg/services/channels/wecom"
 	"github.com/liut/morign/pkg/services/llm"
+	"github.com/liut/morign/pkg/services/runner"
 	"github.com/liut/morign/pkg/services/stores"
 	"github.com/liut/morign/pkg/services/tools"
 	"github.com/liut/morign/pkg/settings"
@@ -25,6 +25,7 @@ type channelHandler struct {
 	llm      llm.Client
 	toolreg  *tools.Registry
 	toolExec *ToolExecutor
+	rnr      *runner.Runner
 }
 
 // InitChannels initializes channel adapters from preset configuration.
@@ -34,16 +35,17 @@ func InitChannels(r chi.Router, preset *aigc.Preset, sto stores.Storage, llmClie
 	channels.RegisterChannel("feishu", feishu.New)
 	channels.RegisterChannel("wecom", wecom.New)
 
+	if preset == nil || len(preset.Channels) == 0 {
+		slog.Info("channel: no platforms configured")
+		return nil
+	}
+
 	chandler := &channelHandler{
 		sto:      sto,
 		llm:      llmClient,
 		toolreg:  toolreg,
 		toolExec: NewToolExecutor(toolreg),
-	}
-
-	if preset == nil || len(preset.Channels) == 0 {
-		slog.Info("channel: no platforms configured")
-		return nil
+		rnr:      runner.New(stores.NewSessionStore(sto), stores.NewHistoryStore(sto)),
 	}
 
 	for name, cfg := range preset.Channels {
@@ -217,9 +219,10 @@ func (chh *channelHandler) handleStreamingReply(ctx context.Context, p channel.C
 		}
 
 		// Execute tool calls and update messages with results
-		var hasToolCall bool
-		messages, hasToolCall = chh.toolExec.ExecuteToolCalls(ctx, messages, toolCalls, "")
-		if !hasToolCall {
+		evs, msgs := chh.toolExec.ExecuteToolCalls(ctx, messages, toolCalls, "")
+		messages = msgs
+		if len(evs) == 0 {
+			// 没有成功执行任何工具，跳出循环
 			break
 		}
 	}
@@ -237,18 +240,13 @@ func (chh *channelHandler) handleStreamingReply(ctx context.Context, p channel.C
 
 	// Save to history
 	if fullAnswer != "" {
-		hi := &aigc.HistoryItem{
-			Time: time.Now().Unix(),
-			UID:  msg.UserID,
-			ChatItem: &aigc.HistoryChatItem{
-				User:      msg.Content,
-				Assistant: fullAnswer,
-			},
-		}
-		if err := cs.AddHistory(ctx, hi); err == nil {
-			if err := cs.Save(ctx); err != nil {
-				slog.Warn("channel: save history failed", "err", err)
-			}
+		if err := chh.rnr.Persist(ctx, cs.GetID(), &llm.Event{
+			Author:     "assistant",
+			Delta:      fullAnswer,
+			UserID:     msg.UserID,
+			UserPrompt: msg.Content,
+		}); err != nil {
+			slog.Warn("channel: persist history failed", "err", err)
 		}
 	}
 }
@@ -256,20 +254,14 @@ func (chh *channelHandler) handleStreamingReply(ctx context.Context, p channel.C
 // doChannelStream performs one streaming chat round, returns answer, tool calls, and streamID.
 // The stream lifecycle (Start/Finish) is managed by the caller (handleStreamingReply).
 func (chh *channelHandler) doChannelStream(ctx context.Context, p channel.Channel, msg *channel.Message, sr channel.StreamReplier, streamID string, messages []llm.Message, tools []llm.ToolDefinition) (string, []llm.ToolCall, error) {
-	stream, err := chh.llm.StreamChat(ctx, messages, tools)
-	if err != nil {
-		slog.Error("channel: stream chat failed", "channel", p.Name(), "error", err)
-		return "", nil, err
-	}
-
 	var contentBuilder strings.Builder
 	var currentToolCalls []llm.ToolCall
 	chunkCount := 0
 
-	for result := range stream {
+	for result, err := range chh.llm.StreamChat(ctx, messages, tools) {
 		chunkCount++
-		if result.Error != nil {
-			slog.Warn("channel: stream error", "err", result.Error)
+		if err != nil {
+			slog.Warn("channel: stream error", "err", err)
 			break
 		}
 
@@ -295,8 +287,6 @@ func (chh *channelHandler) doChannelStream(ctx context.Context, p channel.Channe
 		"toolCalls_len", len(currentToolCalls),
 		"streamID", streamID)
 
-	// Stream ended (EOF). If Done was never true, there are no tool calls.
-	// currentToolCalls remains nil, which is correct.
 	return contentBuilder.String(), currentToolCalls, nil
 }
 
@@ -322,18 +312,13 @@ func (chh *channelHandler) handleRegularReply(ctx context.Context, p channel.Cha
 
 	// Save to history (only final answer, not tool call content)
 	if len(answer) > 0 {
-		hi := &aigc.HistoryItem{
-			Time: time.Now().Unix(),
-			UID:  msg.UserID,
-			ChatItem: &aigc.HistoryChatItem{
-				User:      msg.Content,
-				Assistant: answer,
-			},
-		}
-		if err := cs.AddHistory(ctx, hi); err == nil {
-			if err := cs.Save(ctx); err != nil {
-				slog.Warn("channel: save history failed", "err", err)
-			}
+		if err := chh.rnr.Persist(ctx, cs.GetID(), &llm.Event{
+			Author:     "assistant",
+			Delta:      answer,
+			UserID:     msg.UserID,
+			UserPrompt: msg.Content,
+		}); err != nil {
+			slog.Warn("channel: persist history failed", "err", err)
 		}
 	}
 

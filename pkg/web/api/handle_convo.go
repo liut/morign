@@ -59,26 +59,6 @@ type chatRequest struct {
 	prompt   string
 }
 
-func (cr *chatRequest) gatherUsage(res chatResponse) convo.UsageRecordBasic {
-	sub := convo.UsageRecordBasic{
-		SessionID:    cr.cs.GetOID(),
-		MsgCount:     len(cr.messages),
-		InputTokens:  res.usage.InputTokens,
-		OutputTokens: res.usage.OutputTokens,
-		TotalTokens:  res.usage.TotalTokens,
-		Model:        res.model,
-	}
-	sub.MetaAddKVs("prompt", cr.prompt,
-		"answerHead", words.TakeHead(res.answer, 12, ".."),
-		"answerTail", words.TakeTail(res.answer, 15, ".."),
-	)
-	if len(res.llmResID) > 0 {
-		sub.MetaAddKVs("resposeID", res.llmResID)
-	}
-
-	return sub
-}
-
 // convertMCPToolsToLLMTools 将 MCP 工具描述转换为 LLM 工具定义
 func convertMCPToolsToLLMTools(tools []mcps.ToolDescriptor) []llm.ToolDefinition {
 	result := make([]llm.ToolDefinition, 0, len(tools))
@@ -380,11 +360,11 @@ func (a *api) chatStreamResponseLoop(ccr *chatRequest, w http.ResponseWriter, r 
 		logger().Infow("before execute tool calls", "tools", len(streamRes.toolCalls), "msgs", len(ccr.messages),
 			"think_len", len(streamRes.think))
 
-		var hasToolCall bool
 		// 执行工具调用，传入 reasoning_content 以便回传
-		ccr.messages, hasToolCall = a.toolExec.ExecuteToolCalls(cctx, ccr.messages, streamRes.toolCalls, streamRes.think)
-		logger().Infow("executed tool calls", "hasToolCall", hasToolCall, "msgs", len(ccr.messages))
-		if !hasToolCall {
+		evs, msgs := a.toolExec.ExecuteToolCalls(cctx, ccr.messages, streamRes.toolCalls, streamRes.think)
+		ccr.messages = msgs
+		logger().Infow("executed tool calls", "executed", len(evs), "msgs", len(ccr.messages))
+		if len(evs) == 0 {
 			// 没有成功执行任何工具，跳出循环
 			res.finish = streamRes.finish
 			break
@@ -393,12 +373,13 @@ func (a *api) chatStreamResponseLoop(ccr *chatRequest, w http.ResponseWriter, r 
 	}
 
 	if len(res.answer) > 0 {
-		ccr.hi.ChatItem.Assistant = res.answer
-		ccr.hi.ChatItem.Think = res.think
-		if err := ccr.cs.AddHistory(r.Context(), ccr.hi); err == nil {
-			if err = ccr.cs.Save(r.Context()); err != nil {
-				logger().Infow("save convo fail", "err", err)
-			}
+		if err := a.rnr.Persist(r.Context(), ccr.cs.GetID(), &llm.Event{
+			Author:     "assistant",
+			Delta:      res.answer,
+			Think:      res.think,
+			UserPrompt: ccr.prompt,
+		}); err != nil {
+			logger().Infow("persist fail", "err", err)
 		}
 	}
 
@@ -430,34 +411,27 @@ func (a *api) chatStreamResponseLoop(ccr *chatRequest, w http.ResponseWriter, r 
 
 // doChatStream 执行一次流式调用，返回累积的 answer 和 toolCalls
 func (a *api) doChatStream(ccr *chatRequest, w http.ResponseWriter, r *http.Request) chatResponse {
-	stream, err := a.llm.StreamChat(r.Context(), ccr.messages, ccr.tools)
-	if err != nil {
-		logger().Infow("call chat stream fail", "err", err)
-		apiFail(w, r, 500, err)
-		return chatResponse{}
-	}
-
 	var res chatResponse
 	var lastWriteEmpty bool // 标记上一次是否写入了空消息
 
-	for result := range stream {
-		var cm ChatMessage
-
-		if result.Error != nil {
-			logger().Infow("stream error", "err", result.Error)
+	for result, err := range a.llm.StreamChat(r.Context(), ccr.messages, ccr.tools) {
+		if err != nil {
+			logger().Infow("stream error", "err", err)
 			break
 		}
+
+		var cm ChatMessage
 
 		cm.Delta = result.Delta
 		cm.Think = result.Think
 		res.answer += result.Delta
 		res.think += result.Think
 		res.usage = result.Usage
-		if len(result.ToolCalls) > 0 && result.FinishReason == llm.FinishReasonToolCalls {
+		if len(result.ToolCalls) > 0 && result.StopReason == llm.FinishReasonToolCalls {
 			cm.ToolCalls = convertToolCallsForJSON(result.ToolCalls)
 			ccr.chunkIdx++
 			cm.ConversationID = ccr.cs.GetID()
-			cm.FinishReason = string(result.FinishReason)
+			cm.FinishReason = string(result.StopReason)
 			_ = writeEvent(w, strconv.Itoa(ccr.chunkIdx), &cm)
 		}
 
@@ -469,29 +443,41 @@ func (a *api) doChatStream(ccr *chatRequest, w http.ResponseWriter, r *http.Requ
 		}
 
 		if result.Done {
-			logger().Infow("result done", "finish", result.FinishReason)
-			res.finish = result.FinishReason
-		} else {
-			// 判断当前是否为空消息
-			isEmpty := result.Delta == "" && len(cm.ToolCalls) == 0
-			if !isEmpty || !lastWriteEmpty {
-				// 有内容，或者上一次不是空的，则输出
-				ccr.chunkIdx++
-				if wrote := writeEvent(w, strconv.Itoa(ccr.chunkIdx), &cm); !wrote {
-					break
-				}
-			}
-			// 如果当前是空的且上一次也是空的，跳过（连续空消息只保留第一个）
-		}
-
-		if result.Done { // 只使用最后拼接的完整信息
+			logger().Infow("result done", "finish", result.StopReason)
+			res.finish = result.StopReason
 			res.toolCalls = result.ToolCalls
 			break
 		}
+
+		// 判断当前是否为空消息
+		isEmpty := result.Delta == "" && result.Think == "" && len(cm.ToolCalls) == 0
+		if !isEmpty || !lastWriteEmpty {
+				// 有内容，或者上一次不是空的，则输出
+			ccr.chunkIdx++
+			if wrote := writeEvent(w, strconv.Itoa(ccr.chunkIdx), &cm); !wrote {
+				break
+			}
+		}
+			// 如果当前是空的且上一次也是空的，跳过（连续空消息只保留第一个）
+		lastWriteEmpty = isEmpty
 	}
 	if res.usage != nil {
-		if _, err := a.sto.Convo().CreateUsageRecord(r.Context(), ccr.gatherUsage(res)); err != nil {
-			logger().Infow("create session usage fail", "err", err)
+		meta := map[string]any{
+			"prompt":     ccr.prompt,
+			"answerHead": words.TakeHead(res.answer, 12, ".."),
+			"answerTail": words.TakeTail(res.answer, 15, ".."),
+		}
+		if len(res.llmResID) > 0 {
+			meta["resposeID"] = res.llmResID
+		}
+		if err := a.rnr.Persist(r.Context(), ccr.cs.GetID(), &llm.Event{
+			Author:   "assistant",
+			Usage:    res.usage,
+			Model:    res.model,
+			MsgCount: len(ccr.messages),
+			Meta:     meta,
+		}); err != nil {
+			logger().Infow("persist usage fail", "err", err)
 		}
 	}
 	logger().Infow("chat stream done", "finish", res.finish, "answer", len(res.answer),

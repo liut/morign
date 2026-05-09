@@ -99,20 +99,6 @@ func (r *ChatResult) HasToolCalls() bool {
 	return len(r.ToolCalls) > 0
 }
 
-// StreamResult 流式响应结果
-type StreamResult struct {
-	Delta        string
-	Think        string
-	ToolCalls    []ToolCall
-	Done         bool `json:",omitempty"`
-	FinishReason FinishReason
-	Error        error `json:",omitempty"`
-	Model        string
-	ResponseID   string
-
-	Usage *Usage
-}
-
 // Usage token 使用统计
 type Usage struct {
 	InputTokens  int

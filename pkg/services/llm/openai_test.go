@@ -224,22 +224,15 @@ func TestOpenAIProviderStreamChat(t *testing.T) {
 		temperature: 0.7,
 	}
 
-	ch, err := p.StreamChat(context.Background(), cfg, []Message{
+	var results []*Event
+	for event, err := range p.StreamChat(context.Background(), cfg, []Message{
 		{Role: RoleUser, Content: "Hi"},
-	}, nil)
-
-	if err != nil {
-		t.Errorf("StreamChat() error = %v", err)
-		return
-	}
-
-	var results []StreamResult
-	for result := range ch {
-		if result.Error != nil {
-			t.Errorf("stream error = %v", result.Error)
+	}, nil) {
+		if err != nil {
+			t.Errorf("stream error = %v", err)
 			break
 		}
-		results = append(results, result)
+		results = append(results, event)
 	}
 
 	// 验证至少收到了一些结果
@@ -277,24 +270,17 @@ func TestOpenAIProviderStreamChatWithTools(t *testing.T) {
 		},
 	}
 
-	ch, err := p.StreamChat(context.Background(), cfg, []Message{
+	for event, err := range p.StreamChat(context.Background(), cfg, []Message{
 		{Role: RoleUser, Content: "What's the weather?"},
-	}, tools)
-
-	if err != nil {
-		t.Errorf("StreamChat() error = %v", err)
-		return
-	}
-
-	for result := range ch {
-		if result.Error != nil {
-			t.Errorf("stream error = %v", result.Error)
+	}, tools) {
+		if err != nil {
+			t.Errorf("stream error = %v", err)
 			break
 		}
 		// 验证 tool calls 被正确解析
-		if len(result.ToolCalls) > 0 {
-			if result.ToolCalls[0].Function.Name != "get_weather" {
-				t.Errorf("tool name = %v, want get_weather", result.ToolCalls[0].Function.Name)
+		if len(event.ToolCalls) > 0 {
+			if event.ToolCalls[0].Function.Name != "get_weather" {
+				t.Errorf("tool name = %v, want get_weather", event.ToolCalls[0].Function.Name)
 			}
 		}
 	}

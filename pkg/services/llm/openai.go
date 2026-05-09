@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"iter"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 )
 
 type StreamOptions struct {
@@ -137,13 +139,9 @@ func (p *openAIProvider) Chat(ctx context.Context, cfg *config, messages []Messa
 	return result, nil
 }
 
-func (p *openAIProvider) StreamChat(ctx context.Context, cfg *config, messages []Message, tools []ToolDefinition) (<-chan StreamResult, error) {
-	ch := make(chan StreamResult, 100)
+func (p *openAIProvider) StreamChat(ctx context.Context, cfg *config, messages []Message, tools []ToolDefinition) iter.Seq2[*Event, error] {
 
-	// 启动流式读取 goroutine
-	go func() {
-		defer close(ch)
-
+	return func(yield func(*Event, error) bool) {
 		endpoint := buildEndpoint(cfg.baseURL, "/chat/completions")
 
 		var toolsOpt []ToolDefinition
@@ -175,18 +173,16 @@ func (p *openAIProvider) StreamChat(ctx context.Context, cfg *config, messages [
 			"messages", MessagesLogged(messages),
 		)
 
-		// 序列化请求体，保存用于错误时打印
 		reqBodyBytes, err := json.Marshal(reqBody)
 		if err != nil {
-			ch <- StreamResult{Error: fmt.Errorf("marshal request: %w", err)}
+			yield(nil, fmt.Errorf("marshal request: %w", err))
 			return
 		}
 
-		// 构建并发送请求
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(reqBodyBytes))
 		if err != nil {
 			logger().Warnw("create stream request failed", "err", err, "reqBody", string(reqBodyBytes))
-			ch <- StreamResult{Error: err}
+			yield(nil, err)
 			return
 		}
 
@@ -206,11 +202,10 @@ func (p *openAIProvider) StreamChat(ctx context.Context, cfg *config, messages [
 		resp, err := hc.Do(req)
 		if err != nil {
 			logger().Warnw("stream request failed", "err", err, "reqBody", string(reqBodyBytes))
-			ch <- StreamResult{Error: err}
+			yield(nil, err)
 			return
 		}
 
-		// 检查响应状态码
 		if resp.StatusCode >= 400 {
 			fmt.Fprintf(os.Stderr, "\n%s\n", string(reqBodyBytes))
 			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
@@ -218,24 +213,28 @@ func (p *openAIProvider) StreamChat(ctx context.Context, cfg *config, messages [
 			errMsg := fmt.Errorf("http %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 			logger().Warnw("stream response error",
 				"status", resp.StatusCode,
-				// "reqBody", string(reqBodyBytes),
 				"respBody", string(respBody))
-			ch <- StreamResult{Error: errMsg}
+			yield(nil, errMsg)
 			return
 		}
 		defer resp.Body.Close()
 
-		// 解析流响应
-		if err := p.parseStreamResponse(resp.Body, ch, cfg.debug, cfg.logDir, cfg.model, messages, tools); err != nil {
-			ch <- StreamResult{Error: err}
+		push := func(event *Event, err error) bool {
+			if err != nil {
+				return yield(nil, err)
+			}
+			event.Author = "assistant"
+			return yield(event, nil)
 		}
-	}()
 
-	return ch, nil
+		if err := p.parseStreamResponse(resp.Body, push, cfg.debug, cfg.logDir, cfg.model, messages, tools); err != nil {
+			yield(nil, err)
+		}
+	}
 }
 
-// parseStreamResponse 解析流式响应
-func (p *openAIProvider) parseStreamResponse(body io.Reader, ch chan<- StreamResult, debug bool, logDir, model string, messages []Message, tools []ToolDefinition) error {
+// parseStreamResponse 解析流式响应，通过 push 直接产出 *Event。
+func (p *openAIProvider) parseStreamResponse(body io.Reader, push Pusher, debug bool, logDir, model string, messages []Message, tools []ToolDefinition) error {
 	bufReader := bufio.NewReaderSize(body, 1024)
 
 	var currentToolCalls []ToolCall
@@ -249,9 +248,9 @@ func (p *openAIProvider) parseStreamResponse(body io.Reader, ch chan<- StreamRes
 		rawLine, err := bufReader.ReadBytes('\n')
 		if err != nil {
 			if err == io.EOF {
-				ch <- StreamResult{Done: true}
+				push(&Event{Done: true}, nil)
 			} else {
-				ch <- StreamResult{Error: fmt.Errorf("read: %w", err)}
+				return fmt.Errorf("read: %w", err)
 			}
 			return nil
 		}
@@ -270,7 +269,7 @@ func (p *openAIProvider) parseStreamResponse(body io.Reader, ch chan<- StreamRes
 		noPrefixLine := bytes.TrimLeft(noSpaceLine[5:], " \t")
 		if string(noPrefixLine) == "[DONE]" {
 			logger().Infow("stream DONE", "lines", lines)
-			ch <- StreamResult{Done: true}
+			push(&Event{Done: true}, nil)
 			return nil
 		}
 
@@ -326,17 +325,19 @@ func (p *openAIProvider) parseStreamResponse(body io.Reader, ch chan<- StreamRes
 		}
 
 		// 发送内容，每个 chunk 都带上累积的 tool_calls
-		result := StreamResult{
-			Delta:        delta.Content,
-			Think:        delta.ReasoningContent,
-			ToolCalls:    currentToolCalls,
-			FinishReason: finishReason,
-			Model:        chunk.Model,
-			ResponseID:   chunk.ID,
+		ev := &Event{
+			ID:         NewEventID(),
+			Timestamp:  time.Now(),
+			Delta:      delta.Content,
+			Think:      delta.ReasoningContent,
+			ToolCalls:  currentToolCalls,
+			StopReason: finishReason,
+			Model:      chunk.Model,
+			ResponseID: chunk.ID,
 		}
 		if chunk.Usage != nil {
 			logger().Debugw("usage from chunk", "usage", chunk.Usage)
-			result.Usage = chunk.Usage.toUsage()
+			ev.Usage = chunk.Usage.toUsage()
 		}
 
 		// 累积响应内容
@@ -351,21 +352,21 @@ func (p *openAIProvider) parseStreamResponse(body io.Reader, ch chan<- StreamRes
 		shouldEndStream := finishReason != "" || (len(delta.ToolCalls) == 0 && len(currentToolCalls) > 0)
 
 		if shouldEndStream {
-			logger().Debugw("stream should done", "result", &result)
-			result.Done = true
+			ev.Done = true
 		}
-		ch <- result
+		if !push(ev, nil) {
+			return nil
+		}
 
 		if shouldEndStream {
 			logger().Infow("stream done", "finish_reason", finishReason,
 				"tool_calls_count", len(currentToolCalls), "lines", lines)
-			// 写入交互日志
 			if logDir != "" {
 				go LogInteraction(logDir, "openai", &InteractionLog{
 					Model:      model,
 					Messages:   messages,
 					Tools:      tools,
-					Usage:      result.Usage,
+					Usage:      ev.Usage,
 					Response:   responseText,
 					ToolCalls:  currentToolCalls,
 					Think:      thinkContent,
