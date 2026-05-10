@@ -94,7 +94,7 @@ func importSwagger(cc *cli.Context) error {
 		lw = os.Stderr
 	}
 
-	err = stores.Sgt().Capability().ImportCapabilities(cc.Context, file, lw)
+	err = stores.Sgt().Capability().ImportCapabilities(cc.Context, file, lw, cc.String("mark-missing"))
 	if err != nil {
 		logger().Warnw("import swagger fail", "input", input, "err", err)
 		return err
@@ -120,6 +120,19 @@ func exportDocs(cc *cli.Context) error {
 		Format: cc.String("format"),
 	}
 	return stores.Sgt().Corpus().ExportDocs(ctx, ea)
+}
+
+func cleanupMissed(cc *cli.Context) error {
+	ctx := context.Background()
+	prefix := cc.String("prefix")
+	dryRun := cc.Bool("dry-run")
+	lw := os.Stdout
+	err := stores.Sgt().Capability().CleanupMissedCapabilities(ctx, lw, prefix, dryRun)
+	if err != nil {
+		logger().Warnw("cleanup missed fail", "err", err)
+		return err
+	}
+	return nil
 }
 
 func embeddingDocVector(cc *cli.Context) error {
@@ -316,6 +329,7 @@ func main() {
 				Action:  importSwagger,
 				Flags: []cli.Flag{
 					&cli.StringFlag{Name: "diff", Aliases: []string{"diff-log"}, Value: "", Usage: "a filename of diff"},
+					&cli.StringFlag{Name: "mark-missing", Value: "", Usage: "mark capabilities whose endpoint matches prefix but not in imported file as missed"},
 				},
 			},
 			{
@@ -335,6 +349,15 @@ func main() {
 				Flags: []cli.Flag{
 					&cli.StringFlag{Name: "target", Aliases: []string{"t"}, Value: "doc", Usage: "target to embed: doc|mem|capability"},
 					&cli.IntFlag{Name: "limit", Aliases: []string{"l"}, Value: 90, Usage: "limit for query"},
+				},
+			},
+			{
+				Name:   "cleanup-missed",
+				Usage:  "delete capabilities marked as missed",
+				Action: cleanupMissed,
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: "prefix", Value: "", Usage: "only cleanup capabilities with given endpoint prefix"},
+					&cli.BoolFlag{Name: "dry-run", Value: false, Usage: "preview only, do not actually delete"},
 				},
 			},
 			{
