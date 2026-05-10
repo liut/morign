@@ -22,7 +22,8 @@ import (
 type CapabilityStoreX interface {
 	CountCapability(ctx context.Context) (int, error)
 	GetCapabilityWith(ctx context.Context, method, endpoint string) (*capability.Capability, error)
-	ImportCapabilities(ctx context.Context, r io.Reader, lw io.Writer) error
+	ImportCapabilities(ctx context.Context, r io.Reader, lw io.Writer, markMissingPrefix string) error
+	CleanupMissedCapabilities(ctx context.Context, lw io.Writer, prefix string, dryRun bool) error
 	SyncEmbeddingCapabilities(ctx context.Context, spec *CapCapabilitySpec) error
 	MatchCapabilities(ctx context.Context, ms MatchSpec) (data capability.Capabilities, err error)
 	MatchVectorWith(ctx context.Context, vec corpus.Vector, threshold float32, limit int) (data []capability.CapabilityMatch, err error)
@@ -246,7 +247,7 @@ func (s *capabilityStore) SyncEmbeddingCapabilities(ctx context.Context, spec *C
 }
 
 // ImportCapabilities imports capabilities from swagger document (supports both JSON and YAML formats)
-func (s *capabilityStore) ImportCapabilities(ctx context.Context, r io.Reader, lw io.Writer) error {
+func (s *capabilityStore) ImportCapabilities(ctx context.Context, r io.Reader, lw io.Writer, markMissingPrefix string) error {
 	doc, err := decodeSwaggerDoc(r)
 	if err != nil {
 		logger().Infow("decode swagger fail", "err", err)
@@ -254,6 +255,18 @@ func (s *capabilityStore) ImportCapabilities(ctx context.Context, r io.Reader, l
 	}
 
 	var imported, skipped int
+	// Collect all (method, endpoint) from the import file
+	importedEndpoints := make(map[string]bool)
+	for path, methods := range doc.Paths {
+		for method := range methods {
+			method = strings.ToUpper(method)
+			if method == "PARAMETERS" || method == "RESOLUTIONS" {
+				continue
+			}
+			importedEndpoints[method+":"+path] = true
+		}
+	}
+
 	for path, methods := range doc.Paths {
 		for method, api := range methods {
 			method = strings.ToUpper(method)
@@ -340,8 +353,48 @@ func (s *capabilityStore) ImportCapabilities(ctx context.Context, r io.Reader, l
 		}
 	}
 
-	logger().Infow("import swagger", "imported", imported, "skipped", skipped)
+	// Mark missing capabilities
+	var missed int
+	if markMissingPrefix != "" {
+		missed, err = s.markMissingCapabilities(ctx, lw, markMissingPrefix, importedEndpoints)
+		if err != nil {
+			logger().Warnw("mark missing fail", "err", err)
+		}
+	}
+
+	logger().Infow("import swagger", "imported", imported, "skipped", skipped, "missed", missed)
 	return nil
+}
+
+// markMissingCapabilities marks capabilities whose endpoint matches prefix but not in imported file as missed
+func (s *capabilityStore) markMissingCapabilities(ctx context.Context, lw io.Writer, prefix string, importedEndpoints map[string]bool) (int, error) {
+	// Query all capabilities with endpoint starting with prefix
+	var caps capability.Capabilities
+	err := s.w.db.NewSelect().Model(&caps).
+		Where("endpoint LIKE ?", prefix+"%").
+		Scan(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	missed := 0
+	for _, ca := range caps {
+		key := ca.Method + ":" + ca.Endpoint
+		if _, exists := importedEndpoints[key]; !exists {
+			// Not in imported file, mark as missed
+			set := capability.CapabilitySet{}
+			set.MetaAddKVs("missed", "yes")
+			if err := s.UpdateCapability(ctx, ca.StringID(), set); err != nil {
+				logger().Warnw("mark missed fail", "id", ca.StringID(), "err", err)
+				continue
+			}
+			missed++
+			if lw != nil {
+				fmt.Fprintf(lw, "%s %s [missed]\n", ca.Method, ca.Endpoint)
+			}
+		}
+	}
+	return missed, nil
 }
 
 // InvokerForMatch returns an invoker for matching capabilities
@@ -444,4 +497,38 @@ func (s *capabilityStore) InvokerForInvoke(invoker *CapabilityInvoker) mcps.Invo
 		}
 		return mcps.BuildToolSuccessResult(result), nil
 	}
+}
+
+// CleanupMissedCapabilities deletes capabilities marked as missed
+func (s *capabilityStore) CleanupMissedCapabilities(ctx context.Context, lw io.Writer, prefix string, dryRun bool) error {
+	var caps capability.Capabilities
+	q := s.w.db.NewSelect().Model(&caps).Where("meta->>'missed' = ?", "yes")
+	if prefix != "" {
+		q = q.Where("endpoint LIKE ?", prefix+"%")
+	}
+	if err := q.Scan(ctx); err != nil {
+		return err
+	}
+
+	for _, ca := range caps {
+		if !dryRun {
+			if err := s.DeleteCapability(ctx, ca.StringID()); err != nil {
+				if lw != nil {
+					fmt.Fprintf(lw, "%s %s %q [delete fail: %v]\n",
+						ca.Method, ca.Endpoint, ca.Summary, err)
+				}
+				logger().Warnw("delete missed capability fail", "id", ca.StringID(), "err", err)
+				continue
+			}
+		}
+		if lw != nil {
+			fmt.Fprintf(lw, "%s %s %q", ca.Method, ca.Endpoint, ca.Summary)
+			if dryRun {
+				fmt.Fprintf(lw, " [dry-run]\n")
+			} else {
+				fmt.Fprintf(lw, " [deleted]\n")
+			}
+		}
+	}
+	return nil
 }
