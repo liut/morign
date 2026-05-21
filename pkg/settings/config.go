@@ -69,6 +69,14 @@ type Config struct {
 	Embedding Provider
 	Interact  Provider
 	Summarize Provider
+	Rerank    Provider
+
+	// 是否启用 LLM 重排（默认关闭，验证效果后开启）
+	RerankEnabled bool `envconfig:"RERANK_ENABLED" default:"false"`
+	// 重排宽召回候选数量
+	RerankRecallLimit int `envconfig:"RERANK_RECALL_LIMIT" default:"15"`
+	// 重排结果缓存 TTL（秒）
+	RerankCacheTTL int `envconfig:"RERANK_CACHE_TTL" default:"300"`
 }
 
 type Provider struct {
@@ -78,6 +86,9 @@ type Provider struct {
 	Type   string `envconfig:"type" default:"openai" desc:"provider type: openai, anthropic, openrouter, ollama"`
 	Debug  bool   `envconfig:"debug" desc:"enable debug mode for this provider"`
 	LogDir string `envconfig:"log_dir" desc:"directory to log LLM interactions, files named by date (jsonl format)"`
+
+	Temperature    float64 `envconfig:"temperature"`
+	TimeoutSeconds int     `envconfig:"timeout"`
 }
 
 func (c *Config) GetOAuthName() string {

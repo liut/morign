@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/liut/morign/pkg/models/aigc"
 	"github.com/liut/morign/pkg/services/llm"
@@ -22,6 +23,7 @@ var (
 	// 新的 LLM Clients - 按用途分离
 	llmEm llm.Client // for Embedding
 	llmSu llm.Client // for Summarize/Completion
+	llmRe llm.Client // for Rerank
 
 	llmOnce sync.Once
 )
@@ -29,7 +31,27 @@ var (
 func initLLMClients() {
 	initLLMClient("Embedding", &settings.Current.Embedding, &llmEm)
 	initLLMClient("Summarize", &settings.Current.Summarize, &llmSu)
+	initRerankClient()
+}
 
+func initRerankClient() {
+	p := settings.Current.Rerank
+	if p.APIKey == "" && p.URL == "" {
+		return
+	}
+	var err error
+	llmRe, err = llm.NewClient(
+		llm.WithProvider(p.Type),
+		llm.WithAPIKey(p.APIKey),
+		llm.WithBaseURL(p.URL),
+		llm.WithModel(p.Model),
+		llm.WithDebug(p.Debug),
+		llm.WithLogDir(p.LogDir),
+		llm.WithTemperature(0), // 重排需要确定性输出
+	)
+	if err != nil {
+		logger().Fatalw("create rerank llm client failed", "err", err)
+	}
 }
 
 func initLLMClient(name string, p *settings.Provider, target *llm.Client) {
@@ -46,14 +68,21 @@ func initLLMClient(name string, p *settings.Provider, target *llm.Client) {
 }
 
 func NewLLMClient(p *settings.Provider) (llm.Client, error) {
-	return llm.NewClient(
+	opts := []llm.Option{
 		llm.WithProvider(p.Type),
 		llm.WithAPIKey(p.APIKey),
 		llm.WithBaseURL(p.URL),
 		llm.WithModel(p.Model),
 		llm.WithDebug(p.Debug),
 		llm.WithLogDir(p.LogDir),
-	)
+	}
+	if p.Temperature > 0 {
+		opts = append(opts, llm.WithTemperature(p.Temperature))
+	}
+	if p.TimeoutSeconds > 0 {
+		opts = append(opts, llm.WithTimeout(time.Duration(p.TimeoutSeconds)*time.Second))
+	}
+	return llm.NewClient(opts...)
 }
 
 // GetLLMEmbeddingClient 获取 Embedding 用 LLM Client
@@ -66,6 +95,12 @@ func GetLLMEmbeddingClient() llm.Client {
 func GetLLMSummarizeClient() llm.Client {
 	llmOnce.Do(initLLMClients)
 	return llmSu
+}
+
+// GetLLMRerankClient 获取 Rerank 用 LLM Client（温度固定为 0 确保确定性输出）
+func GetLLMRerankClient() llm.Client {
+	llmOnce.Do(initLLMClients)
+	return llmRe
 }
 
 // GetSummary 让LLM根据模版要求生成摘要
