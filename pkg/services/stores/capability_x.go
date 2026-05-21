@@ -8,6 +8,9 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"time"
+
+	"github.com/cespare/xxhash/v2"
 
 	"gopkg.in/yaml.v3"
 
@@ -15,6 +18,7 @@ import (
 	"github.com/liut/morign/pkg/models/capability"
 	"github.com/liut/morign/pkg/models/corpus"
 	"github.com/liut/morign/pkg/models/mcps"
+	"github.com/liut/morign/pkg/services/llm"
 	"github.com/liut/morign/pkg/settings"
 )
 
@@ -163,6 +167,174 @@ func (s *capabilityStore) GetCapabilityWith(ctx context.Context, method, endpoin
 		return nil, err
 	}
 	return obj, nil
+}
+
+// rerankPromptSystem is the system prompt for the rerank LLM call
+const rerankPromptSystem = `You are an API relevance evaluator. Given a user's intent and a list of candidate APIs, judge whether each API is relevant to the intent. An API is relevant if calling it would help answer or fulfill the user's intent. An API is irrelevant if it does something unrelated, even if keywords overlap.
+
+Output ONLY valid JSON, no other text, no markdown, no explanation.`
+
+// rerankPromptUser is the user prompt template for the rerank LLM call
+const rerankPromptUser = `Evaluate each candidate for the intent: "%s"
+
+Candidates:
+%s
+
+Return JSON with this exact structure:
+{"relevant":[{"index":<candidate_number>,"reason":"<why relevant>"}],"irrelevant":[{"index":<candidate_number>,"reason":"<why irrelevant>"}]}`
+
+// rerankResult is the parsed JSON response from the rerank LLM
+type rerankResult struct {
+	Relevant   []rerankItem `json:"relevant"`
+	Irrelevant []rerankItem `json:"irrelevant"`
+}
+
+type rerankItem struct {
+	Index  int    `json:"index"`
+	Reason string `json:"reason"`
+}
+
+// rerankCapabilities evaluates candidate relevance using an LLM and returns filtered, reordered results.
+// On error, returns (nil, error); the caller should fall back to the original candidates.
+func (s *capabilityStore) rerankCapabilities(ctx context.Context, query string, candidates capability.Capabilities) (capability.Capabilities, error) {
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+
+	// Check cache first
+	cacheKey := rerankCacheKey(query)
+	if cachedIDs := rerankCacheGet(ctx, cacheKey); len(cachedIDs) > 0 {
+		out := rerankRebuildFromCache(cachedIDs, candidates)
+		if len(out) > 0 {
+			logger().Infow("rerank cache hit", "query", query)
+			return out, nil
+		}
+	}
+
+	// Build candidate list text
+	var sb strings.Builder
+	for i, c := range candidates {
+		sb.WriteString(fmt.Sprintf("%d. [%s] %s - %s\n", i+1, c.Method, c.Endpoint, c.Summary))
+	}
+
+	userPrompt := fmt.Sprintf(rerankPromptUser, query, sb.String())
+	messages := []llm.Message{
+		{Role: "system", Content: rerankPromptSystem},
+		{Role: "user", Content: userPrompt},
+	}
+
+	client := GetLLMRerankClient()
+	if client == nil {
+		return nil, errors.New("rerank LLM client not configured")
+	}
+
+	result, err := client.Chat(ctx, messages, nil)
+	if err != nil {
+		logger().Infow("rerank llm chat fail", "query", query, "err", err)
+		return nil, err
+	}
+
+	content := strings.TrimSpace(result.Content)
+	// Strip markdown code fences if present
+	if strings.HasPrefix(content, "```") {
+		if idx := strings.Index(content, "\n"); idx > 0 {
+			content = content[idx+1:]
+		}
+		if idx := strings.LastIndex(content, "```"); idx > 0 {
+			content = content[:idx]
+		}
+		content = strings.TrimSpace(content)
+	}
+
+	var rr rerankResult
+	if err := json.Unmarshal([]byte(content), &rr); err != nil {
+		logger().Infow("rerank json parse fail", "query", query, "content", content, "err", err)
+		return nil, err
+	}
+
+	if len(rr.Relevant) == 0 {
+		logger().Infow("rerank: all candidates marked irrelevant", "query", query)
+		rerankCacheSet(ctx, cacheKey, nil) // cache empty result with short TTL
+		return nil, nil
+	}
+
+	// Build result from relevant candidates in the order returned by LLM
+	out := make(capability.Capabilities, 0, len(rr.Relevant))
+	for _, item := range rr.Relevant {
+		idx := item.Index - 1 // LLM uses 1-based indexing
+		if idx < 0 || idx >= len(candidates) {
+			logger().Infow("rerank: index out of range, skipping", "index", item.Index, "candidates", len(candidates))
+			continue
+		}
+		out = append(out, candidates[idx])
+	}
+
+	// Cache the result
+	ids := make([]string, len(out))
+	for i, c := range out {
+		ids[i] = c.StringID()
+	}
+	rerankCacheSet(ctx, cacheKey, ids)
+
+	logger().Infow("rerank ok", "query", query, "before", len(candidates), "after", len(out))
+	return out, nil
+}
+
+// rerankCacheKey generates a cache key from the query
+func rerankCacheKey(query string) string {
+	return fmt.Sprintf("rerank:%x", xxhash.Sum64String(query))
+}
+
+// rerankCacheGet retrieves cached capability IDs for a query
+func rerankCacheGet(ctx context.Context, key string) []string {
+	rc := SgtRC()
+	if rc == nil {
+		return nil
+	}
+	val, err := rc.Get(ctx, key).Result()
+	if err != nil {
+		return nil
+	}
+	var ids []string
+	if err := json.Unmarshal([]byte(val), &ids); err != nil {
+		logger().Infow("rerank cache unmarshal fail", "key", key, "err", err)
+		return nil
+	}
+	return ids
+}
+
+// rerankCacheSet stores capability IDs in cache
+func rerankCacheSet(ctx context.Context, key string, ids []string) {
+	rc := SgtRC()
+	if rc == nil {
+		return
+	}
+	ttl := time.Duration(settings.Current.RerankCacheTTL) * time.Second
+	if len(ids) == 0 {
+		ttl = 60 * time.Second // short TTL for empty results
+	}
+	data, err := json.Marshal(ids)
+	if err != nil {
+		logger().Infow("rerank cache marshal fail", "key", key, "err", err)
+		return
+	}
+	if err := rc.Set(ctx, key, data, ttl).Err(); err != nil {
+		logger().Infow("rerank cache set fail", "key", key, "err", err)
+	}
+}
+
+// rerankRebuildFromCache rebuilds candidate results from cached IDs
+func rerankRebuildFromCache(ids []string, candidates capability.Capabilities) capability.Capabilities {
+	out := make(capability.Capabilities, 0, len(ids))
+	for _, id := range ids {
+		for i := range candidates {
+			if candidates[i].StringID() == id {
+				out = append(out, candidates[i])
+				break
+			}
+		}
+	}
+	return out
 }
 
 // MatchVectorWith matches capabilities using vector
@@ -410,10 +582,14 @@ func (s *capabilityStore) InvokerForMatch() mcps.Invoker {
 			limit = int(l)
 		}
 
-		caps, err := s.MatchCapabilities(ctx, MatchSpec{
-			Query: intent,
-			Limit: limit,
+		recallLimit := limit
+		if settings.Current.RerankEnabled && settings.Current.RerankRecallLimit > limit {
+			recallLimit = settings.Current.RerankRecallLimit
+		}
 
+		caps, err := s.MatchCapabilities(ctx, MatchSpec{
+			Query:        intent,
+			Limit:        recallLimit,
 			SkipKeywords: true,
 		})
 		if err != nil {
@@ -424,18 +600,33 @@ func (s *capabilityStore) InvokerForMatch() mcps.Invoker {
 		}
 		logger().Infow("matched", "caps", len(caps), "endpoints", caps.Endpoints())
 
+		// Re-rank if enabled and we have more candidates than the requested limit
+		if settings.Current.RerankEnabled && len(caps) > limit {
+			reranked, rerr := s.rerankCapabilities(ctx, intent, caps)
+			if rerr != nil {
+				logger().Infow("rerank failed, using original results", "err", rerr)
+			} else if len(reranked) > 0 {
+				caps = reranked
+			}
+		}
+
+		// Truncate to requested limit
+		if len(caps) > limit {
+			caps = caps[:limit]
+		}
+
 		// Build result with capability details
 		result := make([]map[string]any, 0, len(caps))
-		for _, cap := range caps {
+		for _, cpb := range caps {
 			result = append(result, map[string]any{
-				"id":           cap.StringID(),
-				"operation_id": cap.OperationID,
-				"endpoint":     cap.Endpoint,
-				"method":       cap.Method,
-				"summary":      cap.Summary,
-				"description":  cap.Description,
-				"parameters":   cap.Parameters,
-				"subject":      cap.GetSubject(),
+				"id":           cpb.StringID(),
+				"operation_id": cpb.OperationID,
+				"endpoint":     cpb.Endpoint,
+				"method":       cpb.Method,
+				"summary":      cpb.Summary,
+				"description":  cpb.Description,
+				"parameters":   cpb.Parameters,
+				"subject":      cpb.GetSubject(),
 			})
 		}
 		return mcps.BuildToolSuccessResult(result), nil

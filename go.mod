@@ -7,6 +7,7 @@ require (
 	github.com/JohannesKaufmann/html-to-markdown v1.6.0
 	github.com/PuerkitoBio/goquery v1.12.0
 	github.com/alicebob/miniredis/v2 v2.37.0
+	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/cupogo/andvari v0.0.0-20260314102041-168adc9ab3a6
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/go-chi/render v1.0.3
@@ -37,7 +38,6 @@ require (
 	github.com/araddon/dateparse v0.0.0-20210429162001-6b43995a97de // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
-	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.7 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
