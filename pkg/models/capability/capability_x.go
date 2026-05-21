@@ -18,9 +18,6 @@ func (z *CapabilityBasic) GetSubject() string {
 	if z.Summary != "" {
 		parts = append(parts, z.Summary)
 	}
-	if z.Description != "" {
-		parts = append(parts, z.Description)
-	}
 	return strings.Join(parts, " ")
 }
 
