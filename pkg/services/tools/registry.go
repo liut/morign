@@ -66,31 +66,6 @@ func NewRegistry(sto stores.Storage, opts ...RegistryOption) *Registry {
 	return r
 }
 
-// AddInvoker 添加自定义工具 invoker
-// name: 工具名称
-// fn: 工具调用函数
-// desc: 工具描述
-// inputSchema: 输入参数 schema
-func (r *Registry) AddInvoker(name string, fn Invoker, desc string, inputSchema map[string]any) error {
-	// 检查工具名是否冲突
-	if err := r.checkToolNameConflict(name); err != nil {
-		return err
-	}
-
-	// 注册 invoker
-	r.invokers[name] = fn
-
-	// 注册 ToolDescriptor
-	r.tools = append(r.tools, mcps.ToolDescriptor{
-		Name:        name,
-		Description: desc,
-		InputSchema: inputSchema,
-	})
-
-	logger().Infow("custom invoker added", "name", name)
-	return nil
-}
-
 // Invoke 调用指定名称的工具
 func (r *Registry) Invoke(ctx context.Context, name string, params map[string]any) (map[string]any, error) {
 	if name == "" {
