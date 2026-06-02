@@ -7,15 +7,20 @@ import (
 )
 
 func PatchMCPServer(obj *mcps.Server) {
-	if obj.HeaderCate.HasAuthorization() {
-		obj.HeaderFunc = func(ctx context.Context) map[string]string {
+	obj.HeaderFunc = HeaderFuncFor(obj.HeaderCate)
+}
+
+func HeaderFuncFor(cate mcps.HeaderCate) mcps.HeaderFunc {
+	if cate.HasAuthorization() {
+		return func(ctx context.Context) map[string]string {
 			if tk := OAuthTokenFromContext(ctx); len(tk) > 0 {
 				return map[string]string{"Authorization": "Bearer " + tk}
 			}
 			return nil
 		}
-	} else if obj.HeaderCate.HasOwnerSession() {
-		obj.HeaderFunc = func(ctx context.Context) map[string]string {
+	}
+	if cate.HasOwnerSession() {
+		return func(ctx context.Context) map[string]string {
 			csid := ConvoIDFromContext(ctx)
 			if user, ok := UserFromContext(ctx); ok && len(csid) > 0 {
 				logger().Debugw("got scarf", "uid", user.OID, "csid", csid)
@@ -24,10 +29,10 @@ func PatchMCPServer(obj *mcps.Server) {
 					"X-Session-Id": csid,
 				}
 			}
-
 			return nil
 		}
 	}
+	return nil
 }
 
 func (s *mcpStore) afterLoadServer(ctx context.Context, obj *mcps.Server) error {

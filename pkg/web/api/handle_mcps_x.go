@@ -56,7 +56,7 @@ func (a *api) putMCPServerActivate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 再调用 AddServer 添加到工具注册表
-	if err := a.toolreg.AddServer(r.Context(), server); err != nil {
+	if err := a.toolreg.AddServer(r.Context(), &server.ServerBasic); err != nil {
 		fail(w, r, 503, err)
 		return
 	}

@@ -218,7 +218,7 @@ func convertMCPToolResult(result *mcp.CallToolResult) map[string]any {
 
 // AddServer 添加一个 MCP Server 并初始化连接
 // 仅支持远程传输类型（SSE 或 Streamable）
-func (r *Registry) AddServer(ctx context.Context, server *mcps.Server) error {
+func (r *Registry) AddServer(ctx context.Context, server *mcps.ServerBasic) error {
 	// 验证传输类型
 	if !server.TransType.IsRemote() {
 		return fmt.Errorf("unsupported transport type: %v (only SSE and Streamable are supported)", server.TransType)
@@ -401,16 +401,16 @@ func (r *Registry) LoadServers(ctx context.Context, sto stores.Storage) error {
 		return fmt.Errorf("failed to list MCP servers: %w", err)
 	}
 
-	for _, server := range servers {
-		if !server.TransType.IsRemote() {
-			logger().Infow("skipping non-remote MCP server", "name", server.Name, "type", server.TransType)
+	for i := range servers {
+		if !servers[i].TransType.IsRemote() {
+			logger().Infow("skipping non-remote MCP server", "name", servers[i].Name, "type", servers[i].TransType)
 			continue
 		}
-		if err := r.AddServer(ctx, &server); err != nil {
-			logger().Warnw("failed to load MCP server", "name", server.Name, "err", err)
+		if err := r.AddServer(ctx, &servers[i].ServerBasic); err != nil {
+			logger().Warnw("failed to load MCP server", "name", servers[i].Name, "err", err)
 			continue
 		}
-		logger().Infow("loaded MCP server", "name", server.Name)
+		logger().Infow("loaded MCP server", "name", servers[i].Name)
 	}
 
 	logger().Info("MCP servers loaded", "count", len(servers))

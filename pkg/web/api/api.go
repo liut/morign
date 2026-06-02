@@ -82,14 +82,14 @@ func newapi(sto stores.Storage) *api {
 
 	// setup shell sandbox MCP
 	if settings.Current.StrataMCPURL != "" {
-		var mcpsrv = mcps.NewServerWithBasic(mcps.ServerBasic{
+		sb := mcps.ServerBasic{
 			TransType:  mcps.TransTypeStreamable,
 			Name:       "strata",
 			URL:        settings.Current.StrataMCPURL,
 			HeaderCate: mcps.HeaderCateOwnerID + mcps.HeaderCateSessionID,
-		})
-		stores.PatchMCPServer(mcpsrv)
-		if err := toolreg.AddServer(context.Background(), mcpsrv); err != nil {
+		}
+		sb.HeaderFunc = stores.HeaderFuncFor(sb.HeaderCate)
+		if err := toolreg.AddServer(context.Background(), &sb); err != nil {
 			logger().Infow("add strata mcp server fail", "err", err)
 		}
 	}
@@ -125,9 +125,8 @@ func (a *api) Strap(router chi.Router) {
 			URL:        staffio.GetPrefix() + settings.Current.OAuthPathMCP,
 			HeaderCate: mcps.HeaderCateAuthorization,
 		}
-		mcpsrv := &mcps.Server{ServerBasic: sb}
-		stores.PatchMCPServer(mcpsrv)
-		if err := a.toolreg.AddServer(context.Background(), mcpsrv); err != nil {
+		sb.HeaderFunc = stores.HeaderFuncFor(sb.HeaderCate)
+		if err := a.toolreg.AddServer(context.Background(), &sb); err != nil {
 			logger().Infow("add oauth mcp server fail", "err", err)
 		}
 	}
