@@ -159,9 +159,6 @@ type Server struct {
 
 	ServerBasic
 
-	// 定制头函数
-	HeaderFunc HeaderFunc `bson:"-" bun:"-" extensions:"x-order=I" json:"-" pg:"-"`
-
 	comm.MetaField
 } // @name mcpsServer
 
@@ -192,6 +189,8 @@ type ServerBasic struct {
 	//  * `ownerID`
 	//  * `sessionID`
 	HeaderCate HeaderCate `bson:"headerCate" bun:",notnull,type:smallint" enums:"authorization,ownerID,sessionID" extensions:"x-order=H" json:"headerCate" pg:",notnull,type:smallint" swaggertype:"string"`
+	// 定制头函数
+	HeaderFunc HeaderFunc `bson:"-" bun:"-" extensions:"x-order=I" json:"-" pg:"-"`
 	// for meta update
 	MetaDiff *comm.MetaDiff `bson:"-" bun:"-" json:"metaUp,omitempty" pg:"-" swaggerignore:"true"`
 } // @name mcpsServerBasic

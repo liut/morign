@@ -19,5 +19,5 @@ type MCPConnection struct {
 
 // getToolKey returns the tool key with server prefix
 func (mcpc *MCPConnection) getToolKey(name string) string {
-	return fmt.Sprintf("%s-%s", mcpc.Name, name)
+	return fmt.Sprintf("%s__%s", mcpc.Name, name)
 }

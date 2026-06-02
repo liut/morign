@@ -31,7 +31,7 @@ func init() {
 
 // @Tags 默认 文档生成
 // @ID mcp-servers-get
-// @Summary 列出服务器 🔑
+// @Summary 查询 服务器 列表 🔑
 // @Accept json
 // @Produce json
 // @Param token    header   string  true "登录票据凭证"
@@ -61,7 +61,7 @@ func (a *api) getMCPServers(w http.ResponseWriter, r *http.Request) {
 
 // @Tags 默认 文档生成
 // @ID mcp-servers-id-get
-// @Summary 获取服务器 🔑
+// @Summary 获取 服务器 详情 🔑
 // @Accept json
 // @Produce json
 // @Param token    header   string  true "登录票据凭证"
@@ -85,7 +85,7 @@ func (a *api) getMCPServer(w http.ResponseWriter, r *http.Request) {
 
 // @Tags 默认 文档生成
 // @ID mcp-servers-post
-// @Summary 录入服务器 🔑
+// @Summary 录入 服务器 🔑
 // @Accept json,mpfd
 // @Produce json
 // @Param token    header   string  true "登录票据凭证"
@@ -114,7 +114,7 @@ func (a *api) postMCPServer(w http.ResponseWriter, r *http.Request) {
 
 // @Tags 默认 文档生成
 // @ID mcp-servers-id-put
-// @Summary 更新服务器 🔑
+// @Summary 更新 服务器 🔑
 // @Accept json,mpfd
 // @Produce json
 // @Param token    header   string  true "登录票据凭证"
@@ -145,7 +145,7 @@ func (a *api) putMCPServer(w http.ResponseWriter, r *http.Request) {
 
 // @Tags 默认 文档生成
 // @ID mcp-servers-id-delete
-// @Summary 删除服务器 🔑
+// @Summary 删除 服务器 🔑
 // @Accept json
 // @Produce json
 // @Param token    header   string  true "登录票据凭证"

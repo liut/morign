@@ -116,6 +116,7 @@ models:
         name: HeaderFunc
         type: HeaderFunc
         tags: {bson: '-', json: '-', pg: '-'}
+        basic: true
 
       - type: comm.MetaField
     oidcat: file
