@@ -20,14 +20,16 @@ type Factory func(opts map[string]any) (channel.Channel, error)
 
 // Registry manages channel adapters.
 type Registry struct {
-	channels map[string]Factory
-	started  map[string]channel.Channel
-	mu       sync.Mutex
+	channels   map[string]Factory
+	started    map[string]channel.Channel
+	onStop     map[string]func() // channel stop callbacks
+	mu         sync.Mutex
 }
 
 var registry = &Registry{
 	channels: make(map[string]Factory),
 	started:  make(map[string]channel.Channel),
+	onStop:   make(map[string]func()),
 }
 
 // RegisterChannel registers a channel factory under the given name.
@@ -52,17 +54,28 @@ func NewChannel(name string, opts map[string]any) (channel.Channel, error) {
 	return factory(opts)
 }
 
-// TrackChannel adds a started channel to the registry with a unique key.
-func TrackChannel(key string, p channel.Channel) {
+// TrackChannel adds a started channel to the registry. Optional onStop callback runs before StopAll.
+func TrackChannel(key string, p channel.Channel, onStop ...func()) {
 	registry.mu.Lock()
 	defer registry.mu.Unlock()
 	registry.started[key] = p
+	if len(onStop) > 0 && onStop[0] != nil {
+		registry.onStop[key] = onStop[0]
+	}
 }
 
-// StopAll stops all tracked channels.
+// StopAll stops all tracked channels, calling onStop callbacks first.
 func StopAll() {
 	registry.mu.Lock()
 	defer registry.mu.Unlock()
+	// Call onStop callbacks first (channel MCP cleanup)
+	for key, fn := range registry.onStop {
+		func() {
+			defer func() { _ = recover() }()
+			fn()
+		}()
+		delete(registry.onStop, key)
+	}
 	for name, p := range registry.started {
 		if err := p.Stop(); err != nil {
 			slog.Warn("channel: stop failed", "name", name, "error", err)

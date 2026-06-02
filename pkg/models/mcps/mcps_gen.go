@@ -191,6 +191,8 @@ type ServerBasic struct {
 	HeaderCate HeaderCate `bson:"headerCate" bun:",notnull,type:smallint" enums:"authorization,ownerID,sessionID" extensions:"x-order=H" json:"headerCate" pg:",notnull,type:smallint" swaggertype:"string"`
 	// 定制头函数
 	HeaderFunc HeaderFunc `bson:"-" bun:"-" extensions:"x-order=I" json:"-" pg:"-"`
+	// 频道名，非空时该 server 为频道专属
+	Channel string `bson:"-" bun:"-" extensions:"x-order=J" form:"channel" json:"channel,omitempty" pg:"-"`
 	// for meta update
 	MetaDiff *comm.MetaDiff `bson:"-" bun:"-" json:"metaUp,omitempty" pg:"-" swaggerignore:"true"`
 } // @name mcpsServerBasic

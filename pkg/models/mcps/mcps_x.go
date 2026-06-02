@@ -33,3 +33,16 @@ func ServerNameFromContext(ctx context.Context) string {
 	}
 	return ""
 }
+
+type ctxChannelKey struct{}
+
+func ContextWithChannel(ctx context.Context, name string) context.Context {
+	return context.WithValue(ctx, ctxChannelKey{}, name)
+}
+
+func ChannelFromContext(ctx context.Context) string {
+	if s, ok := ctx.Value(ctxChannelKey{}).(string); ok {
+		return s
+	}
+	return ""
+}
