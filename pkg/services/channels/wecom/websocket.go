@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -100,7 +101,9 @@ type wsStreamContent struct {
 
 func newWebSocket(opts map[string]any) (channel.Channel, error) {
 	botID, _ := opts["bot_id"].(string)
+	botID = os.ExpandEnv(botID)
 	secret, _ := opts["bot_secret"].(string)
+	secret = os.ExpandEnv(secret)
 	if botID == "" || secret == "" {
 		return nil, fmt.Errorf("wecom-ws: bot_id and bot_secret are required for websocket mode")
 	}

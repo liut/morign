@@ -11,6 +11,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"os"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -54,10 +55,15 @@ type replyContext struct {
 
 func newHTTP(opts map[string]any) (channel.Channel, error) {
 	corpID, _ := opts["corp_id"].(string)
+	corpID = os.ExpandEnv(corpID)
 	corpSecret, _ := opts["corp_secret"].(string)
+	corpSecret = os.ExpandEnv(corpSecret)
 	agentID, _ := opts["agent_id"].(string)
+	agentID = os.ExpandEnv(agentID)
 	callbackToken, _ := opts["callback_token"].(string)
+	callbackToken = os.ExpandEnv(callbackToken)
 	callbackAESKey, _ := opts["callback_aes_key"].(string)
+	callbackAESKey = os.ExpandEnv(callbackAESKey)
 
 	if corpID == "" || corpSecret == "" || agentID == "" {
 		return nil, fmt.Errorf("wecom-http: corp_id, corp_secret, and agent_id are required")
