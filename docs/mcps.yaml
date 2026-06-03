@@ -117,6 +117,11 @@ models:
         type: HeaderFunc
         tags: {bson: '-', json: '-', pg: '-'}
         basic: true
+      - comment: 频道名，非空时该 server 为频道专属
+        name: Channel
+        type: string
+        tags: {bson: '-', json: 'channel,omitempty', pg: '-'}
+        basic: true
 
       - type: comm.MetaField
     oidcat: file

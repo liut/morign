@@ -10,6 +10,7 @@ import (
 
 // MCPConnection represents a connection to an MCP server
 type MCPConnection struct {
+	Channel   string
 	Name      string
 	URL       string
 	TransType mcps.TransType
@@ -17,7 +18,18 @@ type MCPConnection struct {
 	toolNames []string // 注册的工具名列表
 }
 
-// getToolKey returns the tool key with server prefix
-func (mcpc *MCPConnection) getToolKey(name string) string {
-	return fmt.Sprintf("%s__%s", mcpc.Name, name)
+func newMCPConnectionFromServer(sb *mcps.ServerBasic) *MCPConnection {
+	return &MCPConnection{
+		Channel:   sb.Channel,
+		Name:      sb.Name,
+		URL:       sb.URL,
+		TransType: sb.TransType,
+	}
+}
+
+func genToolKey(sn, tn string, ch string) string {
+	if len(ch) > 0 {
+		return fmt.Sprintf("%s__%s__%s", ch, sn, tn)
+	}
+	return fmt.Sprintf("%s__%s", sn, tn)
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/liut/morign/pkg/models/aigc"
 	"github.com/liut/morign/pkg/models/channel"
+	"github.com/liut/morign/pkg/models/mcps"
 	"github.com/liut/morign/pkg/services/channels"
 	"github.com/liut/morign/pkg/services/channels/feishu"
 	"github.com/liut/morign/pkg/services/channels/wecom"
@@ -82,12 +83,28 @@ func InitChannels(r chi.Router, preset *aigc.Preset, sto stores.Storage, llmClie
 			slog.Info("channel: HTTP routes registered", "name", name, "path", callbackPath)
 		}
 
+		// 注册频道专属 MCP Server
+		for _, mcpCfg := range cfg.MCPServers {
+			sb := mcps.ServerBasic{
+				Name:       mcpCfg.Name,
+				URL:        mcpCfg.URL,
+				TransType:  mcpCfg.TransType,
+				HeaderCate: mcpCfg.HeaderCate,
+				Channel:    p.Name(),
+			}
+			if err := chandler.toolreg.AddServer(context.Background(), &sb); err != nil {
+				slog.Warn("channel: MCP server init failed", "channel", p.Name(), "server", mcpCfg.Name, "err", err)
+			}
+		}
+
 		// Use name + mode as unique key to support multiple instances of same channel type
 		key := name
 		if cfg.Mode != "" {
 			key = name + "-" + cfg.Mode
 		}
-		channels.TrackChannel(key, p)
+		channels.TrackChannel(key, p, func() {
+			chandler.toolreg.RemoveChannelTools(p.Name())
+		})
 		slog.Info("channel: started", "name", name, "mode", cfg.Mode, "key", key)
 	}
 
@@ -118,6 +135,8 @@ func (chh *channelHandler) MessageHandler(p channel.Channel, msg *channel.Messag
 	} else {
 		logger().Infow("not found user", "userID", msg.UserID, "err", err)
 	}
+
+	ctx = mcps.ContextWithChannel(ctx, p.Name())
 
 	// Check for commands at the beginning of content
 	if cmd := DetectCommand(msg.Content); cmd.Name != "" {

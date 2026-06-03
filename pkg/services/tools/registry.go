@@ -19,6 +19,14 @@ import (
 type Invoker = mcps.Invoker
 type HeaderFunc = transport.HTTPHeaderFunc
 
+// channelToolSet 存储单个频道的专属工具集
+type channelToolSet struct {
+	tools    []mcps.ToolDescriptor
+	invokers map[string]Invoker
+	servers  map[string]*MCPConnection
+	mu       sync.RWMutex
+}
+
 type Registry struct {
 	tools    []mcps.ToolDescriptor
 	invokers map[string]Invoker
@@ -32,6 +40,12 @@ type Registry struct {
 	// MCP Servers 连接容器（name -> connection）
 	servers   map[string]*MCPConnection
 	serversMu sync.RWMutex
+
+	toolsMu sync.RWMutex // 保护 tools、privTools、invokers 的并发访问
+
+	// 频道专属工具集（channel name -> tool set）
+	channelTools map[string]*channelToolSet
+	channelMu    sync.RWMutex
 }
 
 // RegistryOption 用于配置 Registry 的可选参数
@@ -53,9 +67,10 @@ func WithHeaderFunc(hf HeaderFunc) RegistryOption {
 // NewRegistry 创建工具注册表
 func NewRegistry(sto stores.Storage, opts ...RegistryOption) *Registry {
 	r := &Registry{
-		tools:    make([]mcps.ToolDescriptor, 0),
-		invokers: make(map[string]Invoker),
-		servers:  make(map[string]*MCPConnection),
+		tools:        make([]mcps.ToolDescriptor, 0),
+		invokers:     make(map[string]Invoker),
+		servers:      make(map[string]*MCPConnection),
+		channelTools: make(map[string]*channelToolSet),
 	}
 	r.initTools(sto)
 
@@ -66,13 +81,34 @@ func NewRegistry(sto stores.Storage, opts ...RegistryOption) *Registry {
 	return r
 }
 
-// Invoke 调用指定名称的工具
+// Invoke 调用指定名称的工具，频道工具优先
 func (r *Registry) Invoke(ctx context.Context, name string, params map[string]any) (map[string]any, error) {
 	if name == "" {
 		return mcps.BuildToolErrorResult("tool name is empty"), nil
 	}
 
 	logger().Debugw("invoking", "toolName", name, "params", params)
+
+	// 先查频道专属 invokers
+	if ch := mcps.ChannelFromContext(ctx); ch != "" {
+		r.channelMu.RLock()
+		cs := r.channelTools[ch]
+		r.channelMu.RUnlock()
+		if cs != nil {
+			cs.mu.RLock()
+			for key, invoker := range cs.invokers {
+				if strings.EqualFold(key, name) {
+					cs.mu.RUnlock()
+					return invoker(ctx, params)
+				}
+			}
+			cs.mu.RUnlock()
+		}
+	}
+
+	// 再查全局 invokers
+	r.toolsMu.RLock()
+	defer r.toolsMu.RUnlock()
 	for key, invoker := range r.invokers {
 		if strings.EqualFold(key, name) {
 			return invoker(ctx, params)
@@ -124,6 +160,9 @@ func (r *Registry) ApplyToolDescriptions(descriptions map[string]string) {
 		return
 	}
 
+	r.toolsMu.Lock()
+	defer r.toolsMu.Unlock()
+
 	// 更新内置工具描述
 	for i := range r.tools {
 		if desc, ok := descriptions[r.tools[i].Name]; ok && len(desc) > len(r.tools[i].Name) {
@@ -141,14 +180,30 @@ func (r *Registry) ApplyToolDescriptions(descriptions map[string]string) {
 
 // ToolsFor 返回适合当前上下文的工具列表
 // 如果用户有 keeper 角色，返回所有工具；否则只返回公开工具
+// 当 context 中有频道信息时，额外合并该频道的专属工具（始终公开）
 func (r *Registry) ToolsFor(ctx context.Context) []mcps.ToolDescriptor {
-	// TODO: 工具过滤器
+	r.toolsMu.RLock()
+	defer r.toolsMu.RUnlock()
 
+	base := make([]mcps.ToolDescriptor, len(r.tools))
+	copy(base, r.tools)
 	if stores.IsKeeper(ctx) {
-		// 合并公开工具和受限工具
-		return append(r.tools, r.privTools...)
+		base = append(base, r.privTools...)
 	}
-	return r.tools
+
+	// 合并频道专属工具（始终公开）
+	if ch := mcps.ChannelFromContext(ctx); ch != "" {
+		r.channelMu.RLock()
+		cs := r.channelTools[ch]
+		r.channelMu.RUnlock()
+		if cs != nil {
+			cs.mu.RLock()
+			base = append(base, cs.tools...)
+			cs.mu.RUnlock()
+		}
+	}
+
+	return base
 }
 
 // convertInputSchema 将 ToolInputSchema 转换为 map[string]any
@@ -191,22 +246,20 @@ func convertMCPToolResult(result *mcp.CallToolResult) map[string]any {
 	})
 }
 
-// AddServer 添加一个 MCP Server 并初始化连接
-// 仅支持远程传输类型（SSE 或 Streamable）
+// AddServer 添加 MCP Server 并初始化连接。server.Channel 非空时注册为频道专属工具。
 func (r *Registry) AddServer(ctx context.Context, server *mcps.ServerBasic) error {
-	// 验证传输类型
 	if !server.TransType.IsRemote() {
-		return fmt.Errorf("unsupported transport type: %v (only SSE and Streamable are supported)", server.TransType)
+		return fmt.Errorf("unsupported transport type: %v", server.TransType)
 	}
-
-	// 验证 URL
 	if server.URL == "" {
 		return fmt.Errorf("URL is required")
 	}
 
-	// 检查名称冲突
-	if err := r.checkToolNameConflict(server.Name); err != nil {
-		return err
+	// 全局 server 检查名称冲突（快速失败，网络 I/O 前）
+	if server.Channel == "" {
+		if err := r.checkServerNameConflict(server.Name); err != nil {
+			return err
+		}
 	}
 
 	hf := HeaderFunc(server.HeaderFunc)
@@ -214,16 +267,13 @@ func (r *Registry) AddServer(ctx context.Context, server *mcps.ServerBasic) erro
 		hf = r.headerFunc
 	}
 
-	// 创建 transport（使用接口类型）
 	var tp transport.Interface
 	var err error
 	switch server.TransType {
 	case mcps.TransTypeSSE:
-		tp, err = transport.NewSSE(server.URL,
-			transport.WithHeaderFunc(hf))
+		tp, err = transport.NewSSE(server.URL, transport.WithHeaderFunc(hf))
 	case mcps.TransTypeStreamable:
-		tp, err = transport.NewStreamableHTTP(server.URL,
-			transport.WithHTTPHeaderFunc(hf))
+		tp, err = transport.NewStreamableHTTP(server.URL, transport.WithHTTPHeaderFunc(hf))
 	default:
 		return fmt.Errorf("unsupported transport type: %v", server.TransType)
 	}
@@ -231,7 +281,6 @@ func (r *Registry) AddServer(ctx context.Context, server *mcps.ServerBasic) erro
 		return fmt.Errorf("failed to create transport: %w", err)
 	}
 
-	// 创建并启动 client
 	c := client.NewClient(tp)
 	if err := c.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start MCP client: %w", err)
@@ -256,55 +305,117 @@ func (r *Registry) AddServer(ctx context.Context, server *mcps.ServerBasic) erro
 		return fmt.Errorf("failed to list tools: %w", err)
 	}
 
-	// 检查新工具名是否冲突
+	// 注册工具 —— 锁覆盖冲突检测 + 注册，不跨越网络 I/O
+	if server.Channel == "" {
+		r.toolsMu.Lock()
+		r.serversMu.Lock()
+		defer r.toolsMu.Unlock()
+		defer r.serversMu.Unlock()
+		return r.registerToolsLocked(&r.tools, r.invokers, r.servers, server, c, result)
+	}
+
+	r.channelMu.Lock()
+	cs := r.channelTools[server.Channel]
+	if cs == nil {
+		cs = &channelToolSet{
+			tools:    make([]mcps.ToolDescriptor, 0),
+			invokers: make(map[string]Invoker),
+			servers:  make(map[string]*MCPConnection),
+		}
+		r.channelTools[server.Channel] = cs
+	}
+	r.channelMu.Unlock()
+
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	r.toolsMu.RLock()
+	defer r.toolsMu.RUnlock()
+	return r.registerToolsLocked(&cs.tools, cs.invokers, cs.servers, server, c, result)
+}
+
+// registerToolsLocked 注册 MCP Server 工具到指定容器（调用方负责加锁）
+func (r *Registry) registerToolsLocked(
+	tools *[]mcps.ToolDescriptor, invokers map[string]Invoker, servers map[string]*MCPConnection,
+	server *mcps.ServerBasic, c *client.Client, result *mcp.ListToolsResult,
+) error {
+	// 校验工具名冲突（处理并发 AddServer 的 TOCTOU）
 	for _, tool := range result.Tools {
-		if err := r.checkToolNameConflict(tool.Name); err != nil {
+		toolKey := genToolKey(server.Name, tool.Name, server.Channel)
+		if err := r.checkToolNameConflict(toolKey); err != nil {
 			_ = c.Close()
 			return err
 		}
 	}
 
-	// 注册工具
-	r.serversMu.Lock()
-	mcpc := &MCPConnection{
-		Name:      server.Name,
-		URL:       server.URL,
-		TransType: server.TransType,
-		client:    c,
-	}
-	toolNames := make([]string, 0, len(result.Tools))
+	mcpc := newMCPConnectionFromServer(server)
+	mcpc.client = c
+	tNames := make([]string, 0, len(result.Tools))
 	for _, tool := range result.Tools {
-		toolKey := mcpc.getToolKey(tool.Name)
+		toolKey := genToolKey(server.Name, tool.Name, server.Channel)
 		inputSchema := convertInputSchema(tool.InputSchema)
-		r.tools = append(r.tools, mcps.ToolDescriptor{
-			Name:        toolKey,
-			Description: tool.Description,
-			InputSchema: inputSchema,
-		})
-		r.invokers[toolKey] = func(ctx context.Context, params map[string]any) (map[string]any, error) {
-			return r.callServerTool(ctx, server.Name, tool.Name, params)
+		*tools = append(*tools, mcps.ToolDescriptor{
+			Name: toolKey, Description: tool.Description, InputSchema: inputSchema})
+		client := c
+		invokers[toolKey] = func(ctx context.Context, params map[string]any) (map[string]any, error) {
+			return callServerToolWithClient(ctx, client, tool.Name, params)
 		}
-		toolNames = append(toolNames, toolKey)
-		logger().Infow("MCP tool registered", "server", server.Name, "tool", tool.Name)
+		tNames = append(tNames, toolKey)
+		logger().Infow("MCP tool registered", "toolKey", toolKey)
 	}
-	mcpc.toolNames = toolNames
-	r.servers[server.Name] = mcpc
-	r.serversMu.Unlock()
+	mcpc.toolNames = tNames
+	servers[server.Name] = mcpc
 
-	logger().Debugw("MCP server added", "name", server.Name, "url", server.URL, "tools", len(result.Tools))
+	logger().Debugw("MCP server added", "server", server.Name, "url", server.URL, "tools", len(result.Tools))
 	return nil
 }
 
-// checkToolNameConflict 检查工具名是否冲突
+// RemoveChannelTools 移除指定频道的所有专属工具
+func (r *Registry) RemoveChannelTools(channel string) {
+	r.channelMu.Lock()
+	cs := r.channelTools[channel]
+	if cs == nil {
+		r.channelMu.Unlock()
+		return
+	}
+	delete(r.channelTools, channel)
+	r.channelMu.Unlock()
+
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	for _, s := range cs.servers {
+		if s.client != nil {
+			_ = s.client.Close()
+		}
+	}
+	logger().Infow("channel MCP tools removed", "channel", channel)
+}
+
+// checkServerNameConflict 检查 server 名是否冲突（server 名独立于工具名）
+func (r *Registry) checkServerNameConflict(name string) error {
+	switch name {
+	case ToolNameKBSearch, ToolNameKBCreate, ToolNameFetch,
+		ToolNameMemoryList, ToolNameMemoryRecall, ToolNameMemoryStore, ToolNameMemoryForget:
+		return fmt.Errorf("server name %q conflicts with built-in tool", name)
+	}
+
+	r.serversMu.RLock()
+	defer r.serversMu.RUnlock()
+	for _, s := range r.servers {
+		if s.Name == name {
+			return fmt.Errorf("server %q already exists", name)
+		}
+	}
+	return nil
+}
+
+// checkToolNameConflict 检查工具名是否冲突（工具名独立于 server 名）
 func (r *Registry) checkToolNameConflict(name string) error {
-	// 检查是否与内置工具冲突
 	switch name {
 	case ToolNameKBSearch, ToolNameKBCreate, ToolNameFetch,
 		ToolNameMemoryList, ToolNameMemoryRecall, ToolNameMemoryStore, ToolNameMemoryForget:
 		return fmt.Errorf("tool name %q conflicts with built-in tool", name)
 	}
 
-	// 检查是否与已注册的工具冲突
 	for _, t := range r.tools {
 		if t.Name == name {
 			return fmt.Errorf("tool name %q already exists", name)
@@ -315,36 +426,45 @@ func (r *Registry) checkToolNameConflict(name string) error {
 			return fmt.Errorf("tool name %q already exists", name)
 		}
 	}
-
-	// 检查是否与已注册的 server 冲突
-	r.serversMu.RLock()
-	for _, s := range r.servers {
-		if s.Name == name {
-			r.serversMu.RUnlock()
-			return fmt.Errorf("server %q already exists", name)
-		}
-	}
-	r.serversMu.RUnlock()
-
 	return nil
 }
 
-// callServerTool 调用 MCP Server 工具
-func (r *Registry) callServerTool(ctx context.Context, serverName, toolName string, params map[string]any) (map[string]any, error) {
-	r.serversMu.RLock()
-	server, ok := r.servers[serverName]
-	r.serversMu.RUnlock()
+// ChannelServerStatus 表示频道 MCP Server 的状态
+type ChannelServerStatus struct {
+	Name  string   `json:"name"`
+	URL   string   `json:"url"`
+	Tools []string `json:"tools"`
+}
 
-	if !ok {
-		return mcps.BuildToolErrorResult("server not found"), nil
+// ChannelServerStatuses 返回指定频道的 MCP Server 状态列表
+func (r *Registry) ChannelServerStatuses(channel string) []ChannelServerStatus {
+	r.channelMu.RLock()
+	cs := r.channelTools[channel]
+	r.channelMu.RUnlock()
+	if cs == nil {
+		return nil
 	}
 
-	// 确保 params 不为空
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	result := make([]ChannelServerStatus, 0, len(cs.servers))
+	for _, s := range cs.servers {
+		result = append(result, ChannelServerStatus{
+			Name:  s.Name,
+			URL:   s.URL,
+			Tools: s.toolNames,
+		})
+	}
+	return result
+}
+
+// callServerToolWithClient 使用已捕获的 client 调用 MCP 工具，无需查 servers map
+func callServerToolWithClient(ctx context.Context, c *client.Client, toolName string, params map[string]any) (map[string]any, error) {
 	if params == nil {
 		params = make(map[string]any)
 	}
 
-	result, err := server.client.CallTool(mcps.ContextWithServerName(ctx, serverName),
+	result, err := c.CallTool(ctx,
 		mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
 				Name:      toolName,
@@ -352,8 +472,8 @@ func (r *Registry) callServerTool(ctx context.Context, serverName, toolName stri
 			},
 		})
 	if err != nil {
-		logger().Errorw("MCP server tool call failed", "server", serverName, "tool", toolName, "err", err)
-		return mcps.BuildToolErrorResult(err.Error()), nil
+		logger().Errorw("MCP server tool call failed", "tool", toolName, "err", err)
+		return mcps.BuildToolErrorResult(fmt.Sprintf("tool '%s' call failed: %s", toolName, err)), nil
 	}
 
 	return convertMCPToolResult(result), nil
@@ -394,11 +514,13 @@ func (r *Registry) LoadServers(ctx context.Context, sto stores.Storage) error {
 
 // RemoveServer 移除 MCP Server 连接
 func (r *Registry) RemoveServer(name string) error {
+	r.toolsMu.Lock()
 	r.serversMu.Lock()
-	defer r.serversMu.Unlock()
 
 	conn, ok := r.servers[name]
 	if !ok {
+		r.serversMu.Unlock()
+		r.toolsMu.Unlock()
 		return fmt.Errorf("server %q not found", name)
 	}
 
@@ -421,6 +543,9 @@ func (r *Registry) RemoveServer(name string) error {
 	}
 	r.tools = newTools
 	delete(r.servers, name)
+	r.serversMu.Unlock()
+	r.toolsMu.Unlock()
+
 	logger().Infow("MCP server removed", "name", name)
 	return nil
 }
