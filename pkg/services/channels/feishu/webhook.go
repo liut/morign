@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -85,12 +86,15 @@ type feishuWebhookEvent struct {
 
 func newWebhook(opts map[string]any) (channel.Channel, error) {
 	appID, _ := opts["app_id"].(string)
+	appID = os.ExpandEnv(appID)
 	appSecret, _ := opts["app_secret"].(string)
+	appSecret = os.ExpandEnv(appSecret)
 	if appID == "" || appSecret == "" {
 		return nil, fmt.Errorf("feishu-webhook: app_id and app_secret are required")
 	}
 	allowFrom, _ := opts["allow_from"].(string)
 	encryptKey, _ := opts["encrypt_key"].(string)
+	encryptKey = os.ExpandEnv(encryptKey)
 	callbackPath, _ := opts["callback_path"].(string)
 	if callbackPath == "" {
 		callbackPath = "/feishu/callback"

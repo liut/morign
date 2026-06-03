@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 
@@ -43,7 +44,9 @@ type wsReplyContext struct {
 
 func newWebSocket(opts map[string]any) (channel.Channel, error) {
 	appID, _ := opts["app_id"].(string)
+	appID = os.ExpandEnv(appID)
 	appSecret, _ := opts["app_secret"].(string)
+	appSecret = os.ExpandEnv(appSecret)
 	if appID == "" || appSecret == "" {
 		return nil, fmt.Errorf("feishu-ws: app_id and app_secret are required")
 	}

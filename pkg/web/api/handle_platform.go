@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"log/slog"
+	"os"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -87,7 +88,7 @@ func InitChannels(r chi.Router, preset *aigc.Preset, sto stores.Storage, llmClie
 		for _, mcpCfg := range cfg.MCPServers {
 			sb := mcps.ServerBasic{
 				Name:       mcpCfg.Name,
-				URL:        mcpCfg.URL,
+				URL:        os.ExpandEnv(mcpCfg.URL),
 				TransType:  mcpCfg.TransType,
 				HeaderCate: mcpCfg.HeaderCate,
 				Channel:    p.Name(),
