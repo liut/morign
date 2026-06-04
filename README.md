@@ -13,6 +13,8 @@ AI chat backend with knowledge base Q&A, MCP tools, and OAuth authentication.
  - Support text/event-stream
  - Login with OAuth2 client for general Security Provider
  - Built-in MCP (Model Context Protocol) tool support
+ - Multi-channel adapter support (WeCom WebSocket/Webhook, Feishu WebSocket/Webhook)
+ - Preset config `${VAR}` env var expansion for secrets
 
 ## Supported Frontend
 
@@ -132,7 +134,16 @@ welcome: "Hello, I am your virtual assistant. How can I help you?"
 systemPrompt: "You are a helpful assistant."
 toolsPrompt: "You will select the appropriate tool based on the user's question and call the tool to solve the problem."
 
-# Or with custom tool descriptions
+# Channel adapters (WeCom, Feishu) with ${VAR} env var support for secrets
+channels:
+  wecom:
+    enable: true
+    mode: websocket
+    config:
+      bot_id: "${WECOM_BOT_ID}"
+      bot_secret: "${WECOM_BOT_SECRET}"
+
+# Custom tool descriptions (optional)
 tools:
   kb_search: "Search documents in knowledge base with subject. When faced with unknown or uncertain issues, prioritize consulting the knowledge base."
   kb_create: "Create new document of knowledge base, all parameters are required. Note: Unless the user explicitly requests supplementary content, do not invoke it."
@@ -146,6 +157,7 @@ tools:
 - `welcome`: Welcome message displayed to users
 - `systemPrompt`: System prompt for AI conversation
 - `toolsPrompt`: Instructions for tool usage (used when MCP tools are available)
+- `channels`: Channel adapter configurations — secret fields support `${VAR}` env var expansion
 - `tools`: Custom tool descriptions (optional, overrides built-in defaults)
   Note: Memory tools (memory_*) are bound to and isolated by the logged-in user identity.
 

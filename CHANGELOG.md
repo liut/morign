@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.7.0 (2026-06-04)
+
+### 新功能
+
+- **Preset**: config 字段和 MCP URL 支持 `${VAR}` 环境变量展开，消除 YAML 中的硬编码密钥
+- **MCP**: 新增 channel-scoped MCP server 注册，工具按频道隔离
+
+---
+
+## v0.6.0 (2026-06-02)
+
+### 新功能
+
+- **Capability**: 新增 LLM re-rank 能力匹配
+- **Capability**: 新增 `--mark-missing` 和 `cleanup-missed` 批量维护命令
+- **Agent CLI**: thinking/reasoning 内容以 ANSI dim+italic 样式显示
+
+### 重构
+
+- 事件驱动架构重构 — 统一 Event 和 Runner.Persist
+- 移除未使用的 AddInvoker 方法
+- 收窄 AddServer 签名为 ServerBasic，提取 HeaderFuncFor
+- MCP 修复 HeaderFunc 移至 ServerBasic，修正 tool key 分隔符
+
+---
+
 ## v0.5.0 (2026-05-08)
 
 ### 新功能
