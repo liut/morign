@@ -34,8 +34,8 @@ channels:
     enable: false
     mode: websocket
     config:
-      bot_id: "YOUR_BOT_ID"
-      bot_secret: "YOUR_BOT_SECRET"
+      bot_id: "${WECOM_BOT_ID}" # 支持环境变量
+      bot_secret: "${WECOM_BOT_SECRET}" # 支持环境变量
       allow_from: "" # 可选，限制来源 UserID
 
   # WeCom Webhook 回调模式
@@ -43,11 +43,11 @@ channels:
   #   enable: true
   #   mode: webhook
   #   config:
-  #     corp_id: "YOUR_CORP_ID"
-  #     corp_secret: "YOUR_CORP_SECRET"
-  #     agent_id: "YOUR_AGENT_ID"
-  #     callback_token: "YOUR_CALLBACK_TOKEN"
-  #     callback_aes_key: "YOUR_CALLBACK_AES_KEY"
+  #     corp_id: "${WECOM_CORP_ID}"
+  #     corp_secret: "${WECOM_CORP_SECRET}"
+  #     agent_id: "${WECOM_AGENT_ID}"
+  #     callback_token: "${WECOM_CALLBACK_TOKEN}"
+  #     callback_aes_key: "${WECOM_CALLBACK_AES_KEY}"
   #     callback_path: "/wecom/callback"
 
   # 飞书 WebSocket 长连接模式
@@ -55,8 +55,8 @@ channels:
   #   enable: true
   #   mode: websocket
   #   config:
-  #     app_id: "YOUR_APP_ID"
-  #     app_secret: "YOUR_APP_SECRET"
+  #     app_id: "${FEISHU_APP_ID}"
+  #     app_secret: "${FEISHU_APP_SECRET}"
   #     allow_from: "" # 可选，限制来源 UserID
 
   # 飞书 Webhook 回调模式
@@ -64,8 +64,8 @@ channels:
   #   enable: true
   #   mode: webhook
   #   config:
-  #     app_id: "YOUR_APP_ID"
-  #     app_secret: "YOUR_APP_SECRET"
-  #     encrypt_key: "YOUR_ENCRYPT_KEY" # 可选，加密密钥
+  #     app_id: "${FEISHU_APP_ID}"
+  #     app_secret: "${FEISHU_APP_SECRET}"
+  #     encrypt_key: "${FEISHU_ENCRYPT_KEY}" # 可选，加密密钥
   #     callback_path: "/feishu/callback"
   #     allow_from: "" # 可选，限制来源 UserID
