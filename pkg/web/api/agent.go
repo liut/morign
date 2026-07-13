@@ -6,6 +6,7 @@ import (
 	"iter"
 	"strings"
 
+	"github.com/liut/morign/pkg/services/agent"
 	"github.com/liut/morign/pkg/services/llm"
 	"github.com/liut/morign/pkg/services/tools"
 	"github.com/liut/morign/pkg/settings"
@@ -21,7 +22,7 @@ type StreamCallbacks struct {
 type Agent struct {
 	llm         llm.Client
 	toolreg     *tools.Registry
-	toolExec    *ToolExecutor
+	toolExec    *agent.ToolExecutor
 	sysPrompt   string
 	toolsPrompt string
 }
@@ -31,7 +32,7 @@ func NewAgent(llmClient llm.Client, toolreg *tools.Registry, sysPrompt, toolsPro
 	return &Agent{
 		llm:         llmClient,
 		toolreg:     toolreg,
-		toolExec:    NewToolExecutor(toolreg),
+		toolExec:    agent.NewToolExecutor(toolreg),
 		sysPrompt:   sysPrompt,
 		toolsPrompt: toolsPrompt,
 	}
@@ -65,65 +66,27 @@ func (ag *Agent) BuildSystemMessage(ctx context.Context) (llm.Message, []llm.Too
 	return llm.Message{Role: llm.RoleSystem, Content: sb.String()}, tools
 }
 
-// Chat 非流式对话，直接使用 llm.Chat + 工具调用循环。
+// Chat 非流式对话，使用 AgentLoop.RunNonStreaming。
 func (ag *Agent) Chat(ctx context.Context, messages []llm.Message, tools []llm.ToolDefinition) (string, error) {
-	exec := func(ctx context.Context, messages []llm.Message, tools []llm.ToolDefinition) (string, []llm.ToolCall, *llm.Usage, error) {
-		result, err := ag.llm.Chat(ctx, messages, tools)
-		if err != nil {
-			return "", nil, nil, err
-		}
-		return result.Content, result.ToolCalls, result.Usage, nil
-	}
-	answer, _, _, err := ag.toolExec.ExecuteToolCallLoop(ctx, messages, tools, exec)
-	return answer, err
+	loop := agent.NewAgentLoop(agent.AgentLoopConfig{
+		LLM:      ag.llm,
+		ToolExec: ag.toolExec,
+	}, agent.WithMaxLoop(settings.Current.MaxLoopIterations))
+
+	return loop.RunNonStreaming(ctx, messages, tools)
 }
 
-// Run 以 iter.Seq2 方式执行对话，包含工具调用循环。
+// Run 以 iter.Seq2 方式执行对话，使用 AgentLoop。
 func (ag *Agent) Run(ctx context.Context, messages []llm.Message, tools []llm.ToolDefinition) iter.Seq2[*llm.Event, error] {
-	maxLoop := settings.Current.MaxLoopIterations
-	if maxLoop <= 0 {
-		maxLoop = 5
-	}
+	loop := agent.NewAgentLoop(agent.AgentLoopConfig{
+		LLM:      ag.llm,
+		ToolExec: ag.toolExec,
+	}, agent.WithMaxLoop(settings.Current.MaxLoopIterations))
 
 	return func(yield func(*llm.Event, error) bool) {
-		var fullThink string
-
-		for iter := 0; iter < maxLoop; iter++ {
-			var roundAnswer string
-			var roundThink string
-			var toolCalls []llm.ToolCall
-
-			for event, err := range ag.llm.StreamChat(ctx, messages, tools) {
-				if err != nil {
-					yield(nil, fmt.Errorf("stream chat: %w", err))
-					return
-				}
-				roundAnswer += event.Delta
-				roundThink += event.Think
-
-				if !yield(event, nil) {
-					return
-				}
-
-				if event.Done {
-					toolCalls = event.ToolCalls
-				}
-			}
-
-			fullThink += roundThink
-
-			if len(toolCalls) == 0 {
+		for event, err := range loop.Run(ctx, messages, tools) {
+			if !yield(event, err) {
 				return
-			}
-
-			// 执行工具调用，产生 tool result events
-			events, updatedMsgs := ag.toolExec.ExecuteToolCalls(ctx, messages, toolCalls, roundThink)
-			messages = updatedMsgs
-			for _, ev := range events {
-				ev.Author = "tool"
-				if !yield(ev, nil) {
-					return
-				}
 			}
 		}
 	}

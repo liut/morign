@@ -17,6 +17,7 @@ import (
 
 	"github.com/liut/morign/pkg/models/aigc"
 	"github.com/liut/morign/pkg/models/mcps"
+	"github.com/liut/morign/pkg/services/agent"
 	"github.com/liut/morign/pkg/services/llm"
 	"github.com/liut/morign/pkg/services/runner"
 	"github.com/liut/morign/pkg/services/stores"
@@ -51,7 +52,7 @@ type api struct {
 	llm      llm.Client
 	preset   aigc.Preset
 	toolreg  *tools.Registry
-	toolExec *ToolExecutor
+	toolExec *agent.ToolExecutor
 	rnr      *runner.Runner
 }
 
@@ -109,7 +110,7 @@ func newapi(sto stores.Storage) *api {
 		llm:      llmClient,
 		preset:   preset,
 		toolreg:  toolreg,
-		toolExec: NewToolExecutor(toolreg),
+		toolExec: agent.NewToolExecutor(toolreg),
 		rnr:      runner.New(stores.NewSessionStore(sto), stores.NewHistoryStore(sto)),
 	}
 }

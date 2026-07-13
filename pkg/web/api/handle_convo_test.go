@@ -7,41 +7,6 @@ import (
 	"github.com/liut/morign/pkg/services/llm"
 )
 
-func TestFormatToolResult(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    map[string]any
-		expected string
-	}{
-		{
-			name:     "nil input",
-			input:    nil,
-			expected: "",
-		},
-		{
-			name:     "empty map",
-			input:    map[string]any{},
-			expected: "{}",
-		},
-		{
-			name: "normal map",
-			input: map[string]any{
-				"result": "success",
-				"count":  1,
-			},
-			expected: `{"count":1,"result":"success"}`,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := formatToolResult(tt.input)
-			if result != tt.expected {
-				t.Errorf("formatToolResult() = %v, want %v", result, tt.expected)
-			}
-		})
-	}
-}
 
 func TestConvertToolCallsForJSON(t *testing.T) {
 	tests := []struct {

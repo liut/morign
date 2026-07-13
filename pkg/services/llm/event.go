@@ -46,9 +46,10 @@ type Event struct {
 
 // ToolResult 携带单次工具调用的执行结果。
 type ToolResult struct {
-	CallID  string
-	Name    string
-	Content string
+	CallID    string
+	Name      string
+	Content   string
+	Terminate bool // 工具请求终止 agent 循环
 }
 
 // EventActions 是 Event 携带的副作用指令。

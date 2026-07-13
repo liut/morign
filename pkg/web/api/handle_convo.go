@@ -19,6 +19,7 @@ import (
 	"github.com/liut/morign/pkg/models/convo"
 	"github.com/liut/morign/pkg/models/corpus"
 	"github.com/liut/morign/pkg/models/mcps"
+	"github.com/liut/morign/pkg/services/agent"
 	"github.com/liut/morign/pkg/services/llm"
 	"github.com/liut/morign/pkg/services/stores"
 	"github.com/liut/morign/pkg/services/tools"
@@ -54,8 +55,6 @@ type chatRequest struct {
 	tools    []llm.ToolDefinition
 	isSSE    bool
 	cs       stores.Conversation
-	hi       *aigc.HistoryItem
-	chunkIdx int // 全局 chunk 计数器，用于 SSE 事件序号
 	prompt   string
 }
 
@@ -202,13 +201,7 @@ func (a *api) prepareChatRequest(ctx context.Context, param *ChatRequest) *chatR
 		messages: messages,
 		tools:    tools,
 		cs:       cs,
-		hi: &aigc.HistoryItem{
-			Time: time.Now().Unix(),
-			ChatItem: &aigc.HistoryChatItem{
-				User: param.Prompt,
-			},
-		},
-		prompt: param.Prompt,
+		prompt:   param.Prompt,
 	}
 }
 
@@ -231,47 +224,22 @@ func (a *api) postChat(w http.ResponseWriter, r *http.Request) {
 	isSSE := param.Stream || strings.HasSuffix(r.URL.Path, "-sse")
 	isStream := param.Stream || isSSE
 	ccr := a.prepareChatRequest(r.Context(), &param)
-
 	ccr.isSSE = isSSE
+
+	loop := agent.NewAgentLoop(agent.AgentLoopConfig{
+		LLM:      a.llm,
+		ToolExec: a.toolExec,
+		MaxLoop:  settings.Current.MaxLoopIterations,
+	})
 
 	logger().Infow("chat", "csid", param.GetConversionID(), "msgs", len(ccr.messages), "prompt", param.Prompt, "ip", r.RemoteAddr)
 
 	if isStream {
-		res := a.chatStreamResponseLoop(ccr, w, r)
-		logger().Infow("stream response", "answer_len", len(res.answer), "toolCalls_len", len(res.toolCalls))
-		if len(res.answer) > 0 {
-
-			// TODO: migrate to convo.Message
-			if settings.Current.QAChatLog {
-				in := corpus.ChatLogBasic{
-					ChatID:   ccr.cs.GetOID(),
-					Question: param.Prompt,
-					Answer:   res.answer,
-				}
-				ip, _, _ := strings.Cut(r.RemoteAddr, ":")
-				in.MetaAddKVs("ip", ip)
-				if res.usage != nil {
-					in.MetaAddKVs("usage", res.usage)
-				}
-				_, err := stores.Sgt().Corpus().CreateChatLog(r.Context(), in)
-				if err != nil {
-					logger().Infow("save chat log fail", "err", err)
-				}
-			}
-		}
-
+		a.handleSSEStream(w, r, loop, ccr)
 		return
 	}
 
-	// 非流式场景：使用循环执行工具调用
-	exec := func(ctx context.Context, messages []llm.Message, tools []llm.ToolDefinition) (string, []llm.ToolCall, *llm.Usage, error) {
-		result, err := a.llm.Chat(ctx, messages, tools)
-		if err != nil {
-			return "", nil, nil, err
-		}
-		return result.Content, result.ToolCalls, result.Usage, nil
-	}
-	answer, _, _, err := a.executeToolCallLoop(r.Context(), ccr.messages, ccr.tools, exec)
+	answer, err := loop.RunNonStreaming(r.Context(), ccr.messages, ccr.tools)
 	if err != nil {
 		apiFail(w, r, 500, err)
 		return
@@ -310,179 +278,146 @@ func writeEvent(w io.Writer, id string, m any) bool {
 	return true
 }
 
-// chatStreamResponseLoop 循环处理流式响应，支持工具调用循环
-func (a *api) chatStreamResponseLoop(ccr *chatRequest, w http.ResponseWriter, r *http.Request) (res chatResponse) {
-	// 预先设置 HTTP 头信息（只设置一次）
+// handleSSEStream runs the agent loop and writes events to the SSE response.
+func (a *api) handleSSEStream(w http.ResponseWriter, r *http.Request, loop *agent.AgentLoop, ccr *chatRequest) {
 	if _, ok := w.(http.Flusher); !ok {
 		http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
-		return chatResponse{}
+		return
 	}
 
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Add("Conversation-ID", ccr.cs.GetID())
-
 	w.(http.Flusher).Flush()
-
-	var iter int
-	maxLoopIterations := settings.Current.MaxLoopIterations
-	if maxLoopIterations <= 0 {
-		maxLoopIterations = 5
-	}
 
 	cctx := stores.ContextWithConvoID(r.Context(), ccr.cs.GetID())
 
-	for {
-		iter++
-		// 达到迭代次数限制，跳出循环
-		if iter > maxLoopIterations {
-			logger().Infow("chat loop iteration limit reached", "maxIter", maxLoopIterations)
+	var (
+		answer         string
+		think          string
+		usage          *llm.Usage
+		finish         llm.FinishReason
+		chunkIdx       int
+		lastWriteEmpty bool
+	)
+
+	for event, err := range loop.Run(cctx, ccr.messages, ccr.tools) {
+		if err != nil {
+			logger().Infow("agent loop error", "err", err)
 			break
 		}
 
-		// 调用流式响应处理
-		streamRes := a.doChatStream(ccr, w, r)
-		logger().Infow("stream round done", "iter", iter, "maxIter", maxLoopIterations,
-			"answer_len", len(streamRes.answer), "toolCalls_len", len(streamRes.toolCalls))
-
-		// 累积答案
-		res.answer += streamRes.answer
-		if streamRes.usage != nil {
-			res.usage = streamRes.usage
+		if event.ToolResult != nil {
+			continue
 		}
 
-		// 如果没有工具调用，跳出循环
-		if len(streamRes.toolCalls) == 0 {
-			res.finish = streamRes.finish
-			break
-		}
-		logger().Infow("before execute tool calls", "tools", len(streamRes.toolCalls), "msgs", len(ccr.messages),
-			"think_len", len(streamRes.think))
+		var cm ChatMessage
+		cm.Delta = event.Delta
+		cm.Think = event.Think
 
-		// 执行工具调用，传入 reasoning_content 以便回传
-		evs, msgs := a.toolExec.ExecuteToolCalls(cctx, ccr.messages, streamRes.toolCalls, streamRes.think)
-		ccr.messages = msgs
-		logger().Infow("executed tool calls", "executed", len(evs), "msgs", len(ccr.messages))
-		if len(evs) == 0 {
-			// 没有成功执行任何工具，跳出循环
-			res.finish = streamRes.finish
-			break
+		answer += event.Delta
+		think += event.Think
+
+		if event.Usage != nil {
+			usage = event.Usage
 		}
 
+		if event.Done {
+			finish = event.StopReason
+
+			if len(event.ToolCalls) > 0 && event.StopReason == llm.FinishReasonToolCalls {
+				cm.ToolCalls = convertToolCallsForJSON(event.ToolCalls)
+				chunkIdx++
+				cm.ConversationID = ccr.cs.GetID()
+				cm.FinishReason = string(event.StopReason)
+				_ = writeEvent(w, strconv.Itoa(chunkIdx), &cm)
+			}
+
+			if event.Usage != nil {
+				meta := map[string]any{
+					"prompt":     ccr.prompt,
+					"answerHead": words.TakeHead(answer, 12, ".."),
+					"answerTail": words.TakeTail(answer, 15, ".."),
+				}
+				if len(event.ResponseID) > 0 {
+					meta["resposeID"] = event.ResponseID
+				}
+				if err := a.rnr.Persist(r.Context(), ccr.cs.GetID(), &llm.Event{
+					Author:   "assistant",
+					Usage:    event.Usage,
+					Model:    event.Model,
+					MsgCount: len(ccr.messages),
+					Meta:     meta,
+				}); err != nil {
+					logger().Infow("persist usage fail", "err", err)
+				}
+			}
+
+			lastWriteEmpty = false
+			continue
+		}
+
+		isEmpty := event.Delta == "" && event.Think == "" && len(cm.ToolCalls) == 0
+		if !isEmpty || !lastWriteEmpty {
+			chunkIdx++
+			if !writeEvent(w, strconv.Itoa(chunkIdx), &cm) {
+				break
+			}
+		}
+		lastWriteEmpty = isEmpty
 	}
 
-	if len(res.answer) > 0 {
+	logger().Infow("stream response", "answer_len", len(answer), "finish", finish)
+
+	if len(answer) > 0 {
 		if err := a.rnr.Persist(r.Context(), ccr.cs.GetID(), &llm.Event{
 			Author:     "assistant",
-			Delta:      res.answer,
-			Think:      res.think,
+			Delta:      answer,
+			Think:      think,
 			UserPrompt: ccr.prompt,
 		}); err != nil {
 			logger().Infow("persist fail", "err", err)
 		}
 	}
 
-	// 请求完成处理：生成标题（限时同步执行）
+	if settings.Current.QAChatLog && len(answer) > 0 {
+		in := corpus.ChatLogBasic{
+			ChatID:   ccr.cs.GetOID(),
+			Question: ccr.prompt,
+			Answer:   answer,
+		}
+		ip, _, _ := strings.Cut(r.RemoteAddr, ":")
+		in.MetaAddKVs("ip", ip)
+		if usage != nil {
+			in.MetaAddKVs("usage", usage)
+		}
+		_, err := stores.Sgt().Corpus().CreateChatLog(r.Context(), in)
+		if err != nil {
+			logger().Infow("save chat log fail", "err", err)
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
 
-	var cm ChatMessage
-	ccr.chunkIdx++
-	cm.ConversationID = ccr.cs.GetID()
-	cm.FinishReason = string(res.finish)
+	var doneCm ChatMessage
+	chunkIdx++
+	doneCm.ConversationID = ccr.cs.GetID()
+	doneCm.FinishReason = string(finish)
 
 	history, err := ccr.cs.ListHistory(ctx)
 	if err == nil && len(history) > 0 {
 		title, err := stores.GetHistorySummary(ctx, history)
 		if err == nil {
-			cm.Title = title
+			doneCm.Title = title
 		}
 	}
 
-	_ = writeEvent(w, strconv.Itoa(ccr.chunkIdx), &cm)
+	_ = writeEvent(w, strconv.Itoa(chunkIdx), &doneCm)
 
-	// 发送完成事件（最后）
-	ccr.chunkIdx++
-	_ = writeEvent(w, strconv.Itoa(ccr.chunkIdx), esDone)
-
-	return res
-}
-
-// doChatStream 执行一次流式调用，返回累积的 answer 和 toolCalls
-func (a *api) doChatStream(ccr *chatRequest, w http.ResponseWriter, r *http.Request) chatResponse {
-	var res chatResponse
-	var lastWriteEmpty bool // 标记上一次是否写入了空消息
-
-	for result, err := range a.llm.StreamChat(r.Context(), ccr.messages, ccr.tools) {
-		if err != nil {
-			logger().Infow("stream error", "err", err)
-			break
-		}
-
-		var cm ChatMessage
-
-		cm.Delta = result.Delta
-		cm.Think = result.Think
-		res.answer += result.Delta
-		res.think += result.Think
-		res.usage = result.Usage
-		if len(result.ToolCalls) > 0 && result.StopReason == llm.FinishReasonToolCalls {
-			cm.ToolCalls = convertToolCallsForJSON(result.ToolCalls)
-			ccr.chunkIdx++
-			cm.ConversationID = ccr.cs.GetID()
-			cm.FinishReason = string(result.StopReason)
-			_ = writeEvent(w, strconv.Itoa(ccr.chunkIdx), &cm)
-		}
-
-		if len(result.Model) > 0 {
-			res.model = result.Model
-		}
-		if len(result.ResponseID) > 0 {
-			res.llmResID = result.ResponseID
-		}
-
-		if result.Done {
-			logger().Infow("result done", "finish", result.StopReason)
-			res.finish = result.StopReason
-			res.toolCalls = result.ToolCalls
-			break
-		}
-
-		// 判断当前是否为空消息
-		isEmpty := result.Delta == "" && result.Think == "" && len(cm.ToolCalls) == 0
-		if !isEmpty || !lastWriteEmpty {
-				// 有内容，或者上一次不是空的，则输出
-			ccr.chunkIdx++
-			if wrote := writeEvent(w, strconv.Itoa(ccr.chunkIdx), &cm); !wrote {
-				break
-			}
-		}
-			// 如果当前是空的且上一次也是空的，跳过（连续空消息只保留第一个）
-		lastWriteEmpty = isEmpty
-	}
-	if res.usage != nil {
-		meta := map[string]any{
-			"prompt":     ccr.prompt,
-			"answerHead": words.TakeHead(res.answer, 12, ".."),
-			"answerTail": words.TakeTail(res.answer, 15, ".."),
-		}
-		if len(res.llmResID) > 0 {
-			meta["resposeID"] = res.llmResID
-		}
-		if err := a.rnr.Persist(r.Context(), ccr.cs.GetID(), &llm.Event{
-			Author:   "assistant",
-			Usage:    res.usage,
-			Model:    res.model,
-			MsgCount: len(ccr.messages),
-			Meta:     meta,
-		}); err != nil {
-			logger().Infow("persist usage fail", "err", err)
-		}
-	}
-	logger().Infow("chat stream done", "finish", res.finish, "answer", len(res.answer),
-		"ahead", cutTxt(res.answer, 20))
-	return res
+	chunkIdx++
+	_ = writeEvent(w, strconv.Itoa(chunkIdx), esDone)
 }
 
 // @Tags 聊天
@@ -625,44 +560,6 @@ func (a *api) getTools(w http.ResponseWriter, r *http.Request) {
 	apiOk(w, r, a.toolreg.ToolsFor(r.Context()), 0)
 }
 
-// formatToolResult 将工具结果转换为文本字符串
-// 优先提取 content 数组中的 text，否则使用 structuredContent
-func formatToolResult(result map[string]any) string {
-	if result == nil {
-		return ""
-	}
-	// logger().Debugw("formatToolResult", "result", result)
-	// 优先提取 content 数组中的 text
-	if content, ok := result["content"].([]any); ok {
-		for _, c := range content {
-			if cMap, ok := c.(map[string]any); ok {
-				if text, ok := cMap["text"].(string); ok && text != "" {
-					return text
-				}
-			}
-		}
-	}
-	// 备选：使用 structuredContent
-	if sc, ok := result["structuredContent"].(string); ok {
-		return sc
-	}
-	if sc, ok := result["structuredContent"].(map[string]any); ok {
-		for k, v := range sc {
-			if s, ok := v.(string); ok && k == "text" {
-				return s
-			}
-		}
-		if b, err := json.Marshal(sc); err == nil {
-			return string(b)
-		}
-	}
-	// 最后：序列化为 JSON
-	if b, err := json.Marshal(result); err == nil {
-		return string(b)
-	}
-	return ""
-}
-
 // convertToolCallsForJSON 将 llm.ToolCall 转换为可序列化的 map 格式
 func convertToolCallsForJSON(tcs []llm.ToolCall) []map[string]any {
 	if len(tcs) == 0 {
@@ -684,13 +581,4 @@ func convertToolCallsForJSON(tcs []llm.ToolCall) []map[string]any {
 		}
 	}
 	return result
-}
-
-// executeToolCallLoop 执行工具调用循环，直到没有 tool calls
-// - messages: 初始消息列表，会被修改
-// - tools: 工具定义
-// - exec: 执行聊天的函数（流式或非流式）
-// 返回最终的 answer、最后的 toolCalls（如果有）、usage
-func (a *api) executeToolCallLoop(ctx context.Context, messages []llm.Message, tools []llm.ToolDefinition, exec chatExecutor) (string, []llm.ToolCall, *llm.Usage, error) {
-	return a.toolExec.ExecuteToolCallLoop(ctx, messages, tools, exec)
 }
