@@ -11,6 +11,7 @@ import (
 	"github.com/liut/morign/pkg/models/aigc"
 	"github.com/liut/morign/pkg/models/channel"
 	"github.com/liut/morign/pkg/models/mcps"
+	"github.com/liut/morign/pkg/services/agent"
 	"github.com/liut/morign/pkg/services/channels"
 	"github.com/liut/morign/pkg/services/channels/feishu"
 	"github.com/liut/morign/pkg/services/channels/wecom"
@@ -26,7 +27,7 @@ type channelHandler struct {
 	sto      stores.Storage
 	llm      llm.Client
 	toolreg  *tools.Registry
-	toolExec *ToolExecutor
+	toolExec *agent.ToolExecutor
 	rnr      *runner.Runner
 }
 
@@ -46,7 +47,7 @@ func InitChannels(r chi.Router, preset *aigc.Preset, sto stores.Storage, llmClie
 		sto:      sto,
 		llm:      llmClient,
 		toolreg:  toolreg,
-		toolExec: NewToolExecutor(toolreg),
+		toolExec: agent.NewToolExecutor(toolreg),
 		rnr:      runner.New(stores.NewSessionStore(sto), stores.NewHistoryStore(sto)),
 	}
 
@@ -177,75 +178,68 @@ func (chh *channelHandler) MessageHandler(p channel.Channel, msg *channel.Messag
 }
 
 // handleStreamingReply handles reply with streaming support (e.g., WeCom WebSocket).
-// It uses a loop similar to chatStreamResponseLoop to handle tool calls.
+// It delegates the agent loop to AgentLoop and manages the stream lifecycle on the handler side.
 func (chh *channelHandler) handleStreamingReply(ctx context.Context, p channel.Channel, msg *channel.Message, sr channel.StreamReplier, cs stores.Conversation) {
 	// Build messages and get tools
 	messages, tools := chh.buildChatMessagesAndTools(ctx, msg, cs)
 
-	// MaxLoopIterations limits tool call chain depth to prevent infinite loops (default: 5)
-	maxLoopIterations := settings.Current.MaxLoopIterations
-	iter := 0
-	var fullAnswer string
+	// Create AgentLoop to drive LLM calls + tool execution
+	loop := agent.NewAgentLoop(agent.AgentLoopConfig{
+		LLM:      chh.llm,
+		ToolExec: chh.toolExec,
+		MaxLoop:  settings.Current.MaxLoopIterations,
+	})
+
+	var contentBuilder strings.Builder
 	var streamID string
 
-	for {
-		iter++
-		if iter > maxLoopIterations {
-			slog.Info("channel: streaming loop iteration limit reached", "maxIter", maxLoopIterations)
-			break
-		}
-
-		// First iteration: start stream immediately to notify platform we're processing
-		if streamID == "" {
-			var err error
-			streamID, err = sr.StartStream(ctx, msg.ReplyCtx, "正在思考...")
-			if err != nil {
-				slog.Error("channel: start stream failed", "err", err)
-				channelReplyError(p, msg, "AI processing failed")
-				return
-			}
-		}
-
-		// Do one streaming round (stream lifecycle managed by this function)
-		answer, toolCalls, err := chh.doChannelStream(ctx, p, msg, sr, streamID, messages, tools)
+	for event, err := range loop.Run(ctx, messages, tools) {
 		if err != nil {
-			slog.Error("channel: stream round failed", "iter", iter, "err", err)
-			finishErr := sr.FinishStream(ctx, msg.ReplyCtx, streamID, translateLLMErrorToUser(err))
-			if finishErr != nil {
-				slog.Warn("channel: finish stream after error failed, falling back to Reply", "err", finishErr)
+			slog.Error("channel: agent loop error", "err", err)
+			if streamID != "" {
+				if finishErr := sr.FinishStream(ctx, msg.ReplyCtx, streamID, translateLLMErrorToUser(err)); finishErr != nil {
+					slog.Warn("channel: finish stream after error failed, falling back to Reply", "err", finishErr)
+					channelReplyError(p, msg, "AI processing failed")
+				}
+			} else {
 				channelReplyError(p, msg, "AI processing failed")
 			}
 			return
 		}
-		slog.Info("channel: stream round done",
-			"iter", iter,
-			"answer_len", len(answer),
-			"toolCalls_len", len(toolCalls),
-			"streamID", streamID)
 
-		// Only update fullAnswer if we got actual content
-		if answer != "" {
-			fullAnswer = answer
+		// Skip tool result events — they are internal to the agent loop
+		if event.ToolResult != nil {
+			continue
 		}
 
-		// No more tool calls, we're done
-		if len(toolCalls) == 0 {
-			break
+		// Start stream on first non-empty delta
+		if streamID == "" {
+			if event.Delta == "" {
+				continue
+			}
+			var startErr error
+			streamID, startErr = sr.StartStream(ctx, msg.ReplyCtx, event.Delta)
+			if startErr != nil {
+				slog.Error("channel: start stream failed", "err", startErr)
+				channelReplyError(p, msg, "AI processing failed")
+				return
+			}
+			contentBuilder.WriteString(event.Delta)
+			slog.Info("channel: stream started", "streamID", streamID)
+			continue
 		}
 
-		// Add assistant response to messages (with full answer content)
-		if fullAnswer != "" {
-			messages = append(messages, llm.Message{Role: llm.RoleAssistant, Content: fullAnswer})
-		}
-
-		// Execute tool calls and update messages with results
-		evs, msgs := chh.toolExec.ExecuteToolCalls(ctx, messages, toolCalls, "")
-		messages = msgs
-		if len(evs) == 0 {
-			// 没有成功执行任何工具，跳出循环
-			break
+		// Subsequent deltas: accumulate and send full content (WeCom overwrite semantics)
+		if event.Delta != "" {
+			contentBuilder.WriteString(event.Delta)
+			content := contentBuilder.String()
+			if err := sr.AppendStream(ctx, msg.ReplyCtx, streamID, content); err != nil {
+				slog.Warn("channel: append stream failed", "err", err)
+			}
 		}
 	}
+
+	fullAnswer := contentBuilder.String()
 
 	slog.Info("channel: streaming reply finishing",
 		"streamID", streamID,
@@ -271,58 +265,17 @@ func (chh *channelHandler) handleStreamingReply(ctx context.Context, p channel.C
 	}
 }
 
-// doChannelStream performs one streaming chat round, returns answer, tool calls, and streamID.
-// The stream lifecycle (Start/Finish) is managed by the caller (handleStreamingReply).
-func (chh *channelHandler) doChannelStream(ctx context.Context, p channel.Channel, msg *channel.Message, sr channel.StreamReplier, streamID string, messages []llm.Message, tools []llm.ToolDefinition) (string, []llm.ToolCall, error) {
-	var contentBuilder strings.Builder
-	var currentToolCalls []llm.ToolCall
-	chunkCount := 0
-
-	for result, err := range chh.llm.StreamChat(ctx, messages, tools) {
-		chunkCount++
-		if err != nil {
-			slog.Warn("channel: stream error", "err", err)
-			break
-		}
-
-		// Only send to channel when we have content; accumulate locally for WeCom overwrite semantics
-		if result.Delta != "" {
-			contentBuilder.WriteString(result.Delta)
-			content := contentBuilder.String()
-			if err := sr.AppendStream(ctx, msg.ReplyCtx, streamID, content); err != nil {
-				slog.Warn("channel: append stream failed", "err", err)
-			}
-		}
-
-		// Capture tool calls when Done=true (LLM signaled end with tool calls)
-		if result.Done {
-			currentToolCalls = result.ToolCalls
-			slog.Debug("channel: stream Done received", "toolCalls_len", len(result.ToolCalls))
-		}
-	}
-
-	slog.Info("channel: doChannelStream result",
-		"chunkCount", chunkCount,
-		"content_len", contentBuilder.Len(),
-		"toolCalls_len", len(currentToolCalls),
-		"streamID", streamID)
-
-	return contentBuilder.String(), currentToolCalls, nil
-}
-
 // handleRegularReply handles reply without streaming (non-WebSocket channels).
 func (chh *channelHandler) handleRegularReply(ctx context.Context, p channel.Channel, msg *channel.Message, cs stores.Conversation) {
 	messages, tools := chh.buildChatMessagesAndTools(ctx, msg, cs)
 
-	// Execute the chat with tool call loop
-	exec := func(ctx context.Context, messages []llm.Message, tools []llm.ToolDefinition) (string, []llm.ToolCall, *llm.Usage, error) {
-		result, err := chh.llm.Chat(ctx, messages, tools)
-		if err != nil {
-			return "", nil, nil, err
-		}
-		return result.Content, result.ToolCalls, result.Usage, nil
-	}
-	answer, _, _, err := chh.executeToolCallLoop(ctx, messages, tools, exec)
+	// Non-streaming: use AgentLoop.RunNonStreaming
+	loop := agent.NewAgentLoop(agent.AgentLoopConfig{
+		LLM:      chh.llm,
+		ToolExec: chh.toolExec,
+		MaxLoop:  settings.Current.MaxLoopIterations,
+	})
+	answer, err := loop.RunNonStreaming(ctx, messages, tools)
 	if err != nil {
 		slog.Error("channel: chat execution failed",
 			"channel", p.Name(), "error", err)
@@ -347,11 +300,6 @@ func (chh *channelHandler) handleRegularReply(ctx context.Context, p channel.Cha
 		slog.Error("channel: reply failed",
 			"channel", p.Name(), "error", err)
 	}
-}
-
-// executeToolCallLoop executes tool calls in a loop until no more tool calls
-func (chh *channelHandler) executeToolCallLoop(ctx context.Context, messages []llm.Message, tools []llm.ToolDefinition, exec chatExecutor) (string, []llm.ToolCall, *llm.Usage, error) {
-	return chh.toolExec.ExecuteToolCallLoop(ctx, messages, tools, exec)
 }
 
 // channelReplyError sends an error message back to the channel.

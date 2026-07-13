@@ -81,6 +81,17 @@ func NewRegistry(sto stores.Storage, opts ...RegistryOption) *Registry {
 	return r
 }
 
+// RegisterInvoker 注册一个工具及其调用函数。name 为空或 inv 为 nil 时静默忽略。
+func (r *Registry) RegisterInvoker(name string, inv Invoker) {
+	if name == "" || inv == nil {
+		return
+	}
+	r.toolsMu.Lock()
+	defer r.toolsMu.Unlock()
+	r.tools = append(r.tools, mcps.ToolDescriptor{Name: name})
+	r.invokers[name] = inv
+}
+
 // Invoke 调用指定名称的工具，频道工具优先
 func (r *Registry) Invoke(ctx context.Context, name string, params map[string]any) (map[string]any, error) {
 	if name == "" {

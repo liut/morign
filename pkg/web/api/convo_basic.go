@@ -2,9 +2,6 @@ package api
 
 import (
 	"time"
-
-	"github.com/liut/morign/pkg/services/llm"
-	"github.com/liut/morign/pkg/utils/words"
 )
 
 const (
@@ -99,18 +96,4 @@ type ChatMessage struct {
 	Title string `json:"title,omitempty"`
 }
 
-// wrap response from llm
-type chatResponse struct {
-	answer    string
-	toolCalls []llm.ToolCall
-	usage     *llm.Usage
-	finish    llm.FinishReason
-	think     string // reasoning_content for DeepSeek thinking mode
 
-	model    string
-	llmResID string
-}
-
-func cutTxt(s string, n int, opts ...string) string {
-	return words.TakeHead(s, n, opts...)
-}

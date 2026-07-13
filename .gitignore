@@ -112,6 +112,7 @@ tests/
 
 .idea/
 
+.deepseek/
 *.local.*
 
 morrigan
