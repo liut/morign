@@ -1,53 +1,10 @@
 package api
 
-import (
-	"time"
-)
-
 const (
 	historyLimitToken = 50 * 1024
 	esDone            = "[DONE]"
-
-	dftSystemMsg = "You are a helpful assistant. If you cannot find relevant information in the provided context to answer the user's question, please honestly state that you don't know rather than making up an answer."
-	dftToolsMsg  = "You will select the appropriate tool based on the user's question and call the tool to solve the problem. If the tool returns no relevant information, honestly state that you don't know rather than making up an answer. If the tool requires parameters, you must extract them from the user's question. Note that it is important to clearly distinguish between read and write operations. If a write operation is required by the tool, it must be explicitly stated in the user's question for writing purposes (such as adding, creating, appending, modifying, etc.), and all necessary parameters for the tool must be included in the user's question before calling; otherwise, treat it as a regular read operation or Q&A."
 	welcomeText  = "Hello, I am your virtual assistant. How can I help you?"
 )
-
-func thisMoment() string {
-	now := time.Now()
-	hour := now.Hour()
-
-	// 十二时辰顺序：子丑寅卯辰巳午未申酉戌亥
-	var shichen string
-	switch {
-	case hour >= 23 || hour < 1:
-		shichen = "子时"
-	case hour >= 1 && hour < 3:
-		shichen = "丑时"
-	case hour >= 3 && hour < 5:
-		shichen = "寅时"
-	case hour >= 5 && hour < 7:
-		shichen = "卯时"
-	case hour >= 7 && hour < 9:
-		shichen = "辰时"
-	case hour >= 9 && hour < 11:
-		shichen = "巳时"
-	case hour >= 11 && hour < 13:
-		shichen = "午时"
-	case hour >= 13 && hour < 15:
-		shichen = "未时"
-	case hour >= 15 && hour < 17:
-		shichen = "申时"
-	case hour >= 17 && hour < 19:
-		shichen = "酉时"
-	case hour >= 19 && hour < 21:
-		shichen = "戌时"
-	case hour >= 21 && hour < 23:
-		shichen = "亥时"
-	}
-
-	return "当前时辰: " + now.Format("2006-01-02") + " " + shichen
-}
 
 type ChatRequest struct {
 	Prompt          string `json:"prompt"`
@@ -95,5 +52,3 @@ type ChatMessage struct {
 
 	Title string `json:"title,omitempty"`
 }
-
-

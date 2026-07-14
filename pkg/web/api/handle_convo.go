@@ -18,7 +18,6 @@ import (
 	"github.com/liut/morign/pkg/models/aigc"
 	"github.com/liut/morign/pkg/models/convo"
 	"github.com/liut/morign/pkg/models/corpus"
-	"github.com/liut/morign/pkg/models/mcps"
 	"github.com/liut/morign/pkg/services/agent"
 	"github.com/liut/morign/pkg/services/llm"
 	"github.com/liut/morign/pkg/services/stores"
@@ -58,22 +57,6 @@ type chatRequest struct {
 	prompt   string
 }
 
-// convertMCPToolsToLLMTools 将 MCP 工具描述转换为 LLM 工具定义
-func convertMCPToolsToLLMTools(tools []mcps.ToolDescriptor) []llm.ToolDefinition {
-	result := make([]llm.ToolDefinition, 0, len(tools))
-	for _, td := range tools {
-		result = append(result, llm.ToolDefinition{
-			Type: "function",
-			Function: llm.FunctionDefinition{
-				Name:        td.Name,
-				Description: td.Description,
-				Parameters:  td.InputSchema,
-			},
-		})
-	}
-	return result
-}
-
 // prepareSystemMessage 准备系统消息，包括基础 prompt、记忆、工具或知识库
 func prepareSystemMessage(ctx context.Context, sto stores.Storage,
 	toolreg *tools.Registry, prompt string, cs stores.Conversation) (
@@ -83,12 +66,12 @@ func prepareSystemMessage(ctx context.Context, sto stores.Storage,
 	if len(sto.Preset().SystemPrompt) > 0 {
 		sb.WriteString(sto.Preset().SystemPrompt)
 	} else {
-		sb.WriteString(dftSystemMsg)
+		sb.WriteString(agent.DefaultSystemMsg)
 	}
 
 	if settings.Current.DateInContext {
 		sb.WriteString("\n")
-		sb.WriteString(thisMoment())
+		sb.WriteString(agent.ThisMoment())
 	}
 
 	fmt.Fprintf(&sb, "\nCurrent SessionID: %s\n", cs.GetID())
@@ -114,9 +97,9 @@ func prepareSystemMessage(ctx context.Context, sto stores.Storage,
 	}
 
 	// 转换 MCP 工具为 LLM 工具定义
-	tools := convertMCPToolsToLLMTools(toolreg.ToolsFor(ctx))
+	tools := agent.ConvertMCPToolsToLLMTools(toolreg.ToolsFor(ctx))
 	if len(tools) > 0 {
-		toolsPrompt := dftToolsMsg
+		toolsPrompt := agent.DefaultToolsMsg
 		if len(sto.Preset().ToolsPrompt) > 0 {
 			toolsPrompt = sto.Preset().ToolsPrompt
 		}

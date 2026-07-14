@@ -17,9 +17,9 @@ import (
 
 	"github.com/cupogo/andvari/utils/zlog"
 
-	api "github.com/liut/morign/pkg/web/api"
-
 	"github.com/liut/morign/htdocs"
+	svcagent "github.com/liut/morign/pkg/services/agent"
+	_ "github.com/liut/morign/pkg/web/api" // 触发 api 包的 init() 注册路由
 	"github.com/liut/morign/pkg/services/llm"
 	"github.com/liut/morign/pkg/services/stores"
 	"github.com/liut/morign/pkg/services/tools"
@@ -196,18 +196,22 @@ func agent(cc *cli.Context) error {
 		logger().Warnw("load MCP servers fail", "err", err)
 	}
 
-	ag := api.NewAgent(client, toolreg, preset.SystemPrompt, preset.ToolsPrompt)
+	toolExec := svcagent.NewToolExecutor(toolreg)
+	loop := svcagent.NewAgentLoop(svcagent.AgentLoopConfig{
+		LLM:      client,
+		ToolExec: toolExec,
+	}, svcagent.WithMaxLoop(settings.Current.MaxLoopIterations))
 
 	if interactive {
-		return runInteractive(cc.Context, ag, stream)
+		return runInteractive(cc.Context, loop, toolreg, preset.SystemPrompt, preset.ToolsPrompt, stream)
 	}
 
 	ctx := cc.Context
-	sysMsg, tools := ag.BuildSystemMessage(ctx)
+	sysMsg, tools := svcagent.BuildSystemMessage(ctx, toolreg, preset.SystemPrompt, preset.ToolsPrompt)
 	messages := []llm.Message{sysMsg, {Role: llm.RoleUser, Content: message}}
 
 	if stream {
-		cb := api.StreamCallbacks{
+		cb := svcagent.StreamCallbacks{
 			OnDelta: func(delta string) {
 				fmt.Print(delta)
 			},
@@ -215,14 +219,14 @@ func agent(cc *cli.Context) error {
 				fmt.Print(ansiThink + think + ansiReset)
 			},
 		}
-		answer, err := ag.StreamChat(ctx, messages, tools, cb)
+		answer, err := svcagent.StreamChat(ctx, loop, messages, tools, cb)
 		if err != nil {
 			return fmt.Errorf("stream chat: %w", err)
 		}
 		_ = answer
 		fmt.Println()
 	} else {
-		answer, err := ag.Chat(ctx, messages, tools)
+		answer, err := loop.RunNonStreaming(ctx, messages, tools)
 		if err != nil {
 			return fmt.Errorf("chat: %w", err)
 		}
@@ -232,9 +236,9 @@ func agent(cc *cli.Context) error {
 	return nil
 }
 
-func runInteractive(ctx context.Context, ag *api.Agent, stream bool) error {
+func runInteractive(ctx context.Context, loop *svcagent.AgentLoop, toolreg *tools.Registry, sysPrompt, toolsPrompt string, stream bool) error {
 	scanner := bufio.NewScanner(os.Stdin)
-	sysMsg, tools := ag.BuildSystemMessage(ctx)
+	sysMsg, tools := svcagent.BuildSystemMessage(ctx, toolreg, sysPrompt, toolsPrompt)
 	messages := []llm.Message{sysMsg}
 
 	fmt.Println("Agent REPL. Type /exit to quit.")
@@ -254,7 +258,7 @@ func runInteractive(ctx context.Context, ag *api.Agent, stream bool) error {
 		messages = append(messages, llm.Message{Role: llm.RoleUser, Content: input})
 
 		if stream {
-			cb := api.StreamCallbacks{
+			cb := svcagent.StreamCallbacks{
 				OnDelta: func(delta string) {
 					fmt.Print(delta)
 				},
@@ -262,7 +266,7 @@ func runInteractive(ctx context.Context, ag *api.Agent, stream bool) error {
 					fmt.Print(ansiThink + think + ansiReset)
 				},
 			}
-			answer, err := ag.StreamChat(ctx, messages, tools, cb)
+			answer, err := svcagent.StreamChat(ctx, loop, messages, tools, cb)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "\nerror: %v\n", err)
 				continue
@@ -272,7 +276,7 @@ func runInteractive(ctx context.Context, ag *api.Agent, stream bool) error {
 				messages = append(messages, llm.Message{Role: llm.RoleAssistant, Content: answer})
 			}
 		} else {
-			answer, err := ag.Chat(ctx, messages, tools)
+			answer, err := loop.RunNonStreaming(ctx, messages, tools)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
 				continue
