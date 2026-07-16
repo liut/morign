@@ -51,7 +51,7 @@ func LogInteraction(logDir, provider string, log *InteractionLog) {
 	data, err := json.Marshal(log)
 	if err != nil {
 		auditMu.Unlock()
-		f.Close()
+		_ = f.Close()
 		logger().Infow("marshal log failed", "err", err)
 		return
 	}
@@ -60,5 +60,5 @@ func LogInteraction(logDir, provider string, log *InteractionLog) {
 		logger().Infow("write log failed", "err", err)
 	}
 	auditMu.Unlock()
-	f.Close()
+	_ = f.Close()
 }

@@ -209,7 +209,7 @@ func (p *openAIProvider) StreamChat(ctx context.Context, cfg *config, messages [
 		if resp.StatusCode >= 400 {
 			fmt.Fprintf(os.Stderr, "\n%s\n", string(reqBodyBytes))
 			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			errMsg := fmt.Errorf("http %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 			logger().Warnw("stream response error",
 				"status", resp.StatusCode,
@@ -217,7 +217,7 @@ func (p *openAIProvider) StreamChat(ctx context.Context, cfg *config, messages [
 			yield(nil, errMsg)
 			return
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		push := func(event *Event, err error) bool {
 			if err != nil {
@@ -442,7 +442,7 @@ func (p *openAIProvider) doRequest(ctx context.Context, cfg *config, endpoint st
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

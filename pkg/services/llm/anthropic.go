@@ -90,7 +90,7 @@ func (p *anthropicProvider) Chat(ctx context.Context, cfg *config, messages []Me
 		logger().Warnw("anthropic request failed", "err", err, "endpoint", endpoint)
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -199,7 +199,7 @@ func (p *anthropicProvider) StreamChat(ctx context.Context, cfg *config, message
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			errMsg := fmt.Errorf("http %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 			logger().Warnw("stream response error",
 				"status", resp.StatusCode,
@@ -207,7 +207,7 @@ func (p *anthropicProvider) StreamChat(ctx context.Context, cfg *config, message
 			yield(nil, errMsg)
 			return
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		// pusher 适配：补全 author 后直接 yield
 		push := func(event *Event, err error) bool {
@@ -355,7 +355,8 @@ func (p *anthropicProvider) handleStreamEvent(se streamEvent, currentText *strin
 			logger().Debugw("tool_use started", "id", toolID, "name", se.ContentBlock.Name)
 		}
 	case "content_block_delta":
-		if se.Delta.Type == "text_delta" {
+		switch se.Delta.Type {
+		case "text_delta":
 			currentText.WriteString(se.Delta.Text)
 			if !push(&Event{
 				ID:        NewEventID(),
@@ -366,9 +367,9 @@ func (p *anthropicProvider) handleStreamEvent(se streamEvent, currentText *strin
 			}, nil) {
 				return true, currentToolCalls
 			}
-		} else if se.Delta.Type == "thinking_delta" {
+		case "thinking_delta":
 			*thinkContent += se.Delta.Thinking
-				// thinking 独立于 tool_use，不附带正在构建的 tool_calls
+			// thinking 独立于 tool_use，不附带正在构建的 tool_calls
 			if !push(&Event{
 				ID:        NewEventID(),
 				Timestamp: time.Now(),
@@ -377,11 +378,11 @@ func (p *anthropicProvider) handleStreamEvent(se streamEvent, currentText *strin
 			}, nil) {
 				return true, currentToolCalls
 			}
-		} else if se.Delta.Type == "input_json_delta" {
-				// 处理 tool_use 的参数，直接取最后一个 tool_call
+		case "input_json_delta":
+			// 处理 tool_use 的参数，直接取最后一个 tool_call
 			if len(currentToolCalls) > 0 && se.Delta.PartialJSON != "" {
 				lastIdx := len(currentToolCalls) - 1
-					// 跳过 thinking 相关字段（thinking_delta 伴随 input_json_delta 出现，但不属于 tool_use 参数）
+				// 跳过 thinking 相关字段（thinking_delta 伴随 input_json_delta 出现，但不属于 tool_use 参数）
 				if !strings.HasPrefix(strings.TrimSpace(se.Delta.PartialJSON), "\"thinking") {
 					currentToolCalls[lastIdx].Function.Arguments = append(
 						currentToolCalls[lastIdx].Function.Arguments,

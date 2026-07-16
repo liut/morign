@@ -47,7 +47,7 @@ func importDocs(cc *cli.Context) error {
 		logger().Warnw("open fail", "input", input, "err", err)
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	difflog := cc.String("diff")
 	var lw *os.File // log write dat
 	if len(difflog) > 0 {
@@ -56,7 +56,7 @@ func importDocs(cc *cli.Context) error {
 			logger().Warnw("create fail", "difflog", difflog, "err", err)
 			return err
 		}
-		defer lw.Close()
+		defer func() { _ = lw.Close() }()
 	} else {
 		lw = os.Stderr
 	}
@@ -79,7 +79,7 @@ func importSwagger(cc *cli.Context) error {
 		logger().Warnw("open fail", "input", input, "err", err)
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	difflog := cc.String("diff")
 	var lw *os.File
@@ -89,7 +89,7 @@ func importSwagger(cc *cli.Context) error {
 			logger().Warnw("create fail", "difflog", difflog, "err", err)
 			return err
 		}
-		defer lw.Close()
+		defer func() { _ = lw.Close() }()
 	} else {
 		lw = os.Stderr
 	}
@@ -109,7 +109,7 @@ func exportDocs(cc *cli.Context) error {
 		logger().Warnw("open fail", "output", output, "err", err)
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	ctx := context.Background()
 	spec := &stores.CobDocumentSpec{}
 	spec.Limit = 90
@@ -243,7 +243,7 @@ func runInteractive(ctx context.Context, loop *svcagent.AgentLoop, toolreg *tool
 
 	fmt.Println("Agent REPL. Type /exit to quit.")
 	for {
-		fmt.Fprint(os.Stdout, "> ")
+		_, _ = fmt.Fprint(os.Stdout, "> ")
 		if !scanner.Scan() {
 			break
 		}

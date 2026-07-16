@@ -32,7 +32,7 @@ func (z Documents) MarkdownText() string {
 		return "No relevant information found in the knowledge base."
 	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Found %d relevant documents in the knowledge base:\n\n", len(z)))
+	fmt.Fprintf(&sb, "Found %d relevant documents in the knowledge base:\n\n", len(z))
 	for _, doc := range z {
 		sb.WriteString("---\nID: ")
 		sb.WriteString(doc.StringID())

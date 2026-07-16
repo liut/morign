@@ -58,7 +58,7 @@ func New(cfg Config) Service {
 	if cfg.Debug {
 		logger().Infow("routes:")
 		walkFunc := func(method string, route string, handler http.Handler, middlewares ...func(http.Handler) http.Handler) error {
-			route = strings.Replace(route, "/*/", "/", -1)
+			route = strings.ReplaceAll(route, "/*/", "/")
 			fmt.Fprintf(os.Stderr, "DEBUG: %-6s %-24s --> %s (%d mw)\n", method, route, nameOfFunction(handler), len(middlewares))
 			return nil
 		}

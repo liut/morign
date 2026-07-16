@@ -194,7 +194,7 @@ func (p *HTTPChannel) handleVerify(w http.ResponseWriter, r *http.Request) {
 	slog.Info("feishu-webhook: URL verification succeeded")
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprint(w, plain)
+	_, _ = fmt.Fprint(w, plain)
 }
 
 func (p *HTTPChannel) handleMessage(w http.ResponseWriter, r *http.Request, handler channel.MessageHandler) {

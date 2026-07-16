@@ -190,7 +190,7 @@ func (p *WSChannel) runConnection() error {
 		p.mu.Lock()
 		p.conn = nil
 		p.mu.Unlock()
-		conn.Close()
+		_ = conn.Close()
 
 		var staleKeys []any
 		p.pendingAcks.Range(func(key, value any) bool {
@@ -302,7 +302,7 @@ func (p *WSChannel) heartbeat(ctx context.Context, conn *websocket.Conn) {
 			missed := int(p.missedPong.Load())
 			if missed >= wsMaxMissed {
 				slog.Warn("wecom-ws: no heartbeat ack, connection considered dead", "missed", missed)
-				conn.Close()
+				_ = conn.Close()
 				return
 			}
 

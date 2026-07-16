@@ -128,7 +128,7 @@ func fetchURL(ctx context.Context, urlStr, userAgent string, raw bool) (content,
 	if err != nil {
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		err = fmt.Errorf("HTTP %d", resp.StatusCode)

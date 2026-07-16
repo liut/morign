@@ -247,7 +247,7 @@ func LoadPreset() (doc aigc.Preset, err error) {
 		logger().Infow("load preset fail", "file", settings.Current.PresetFile, "err", err)
 		return
 	}
-	defer yf.Close()
+	defer func() { _ = yf.Close() }()
 	err = yaml.NewDecoder(yf).Decode(&doc)
 	if err != nil {
 		logger().Infow("decode preset fail", "err", err)

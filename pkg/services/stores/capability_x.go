@@ -214,7 +214,7 @@ func (s *capabilityStore) rerankCapabilities(ctx context.Context, query string, 
 	// Build candidate list text
 	var sb strings.Builder
 	for i, c := range candidates {
-		sb.WriteString(fmt.Sprintf("%d. [%s] %s - %s\n", i+1, c.Method, c.Endpoint, c.Summary))
+		fmt.Fprintf(&sb, "%d. [%s] %s - %s\n", i+1, c.Method, c.Endpoint, c.Summary)
 	}
 
 	userPrompt := fmt.Sprintf(rerankPromptUser, query, sb.String())
@@ -461,7 +461,7 @@ func (s *capabilityStore) ImportCapabilities(ctx context.Context, r io.Reader, l
 					if err := s.DeleteCapability(ctx, existing.StringID()); err != nil {
 						logger().Infow("delete skipai capability fail", "path", path, "method", method, "err", err)
 					} else if lw != nil {
-						fmt.Fprintf(lw, "%s %s [deleted]\n", method, path)
+						_, _ = fmt.Fprintf(lw, "%s %s [deleted]\n", method, path)
 					}
 				}
 				skipped++
@@ -485,7 +485,7 @@ func (s *capabilityStore) ImportCapabilities(ctx context.Context, r io.Reader, l
 			basic.EnrichSortableFields()
 			if basic.GetSubject() == "" {
 				if lw != nil {
-					fmt.Fprintf(lw, "%s %s [skipped: empty subject]\n", method, path)
+					_, _ = fmt.Fprintf(lw, "%s %s [skipped: empty subject]\n", method, path)
 				}
 				skipped++
 				continue
@@ -507,7 +507,7 @@ func (s *capabilityStore) ImportCapabilities(ctx context.Context, r io.Reader, l
 					continue
 				}
 				if lw != nil {
-					fmt.Fprintf(lw, "%s %s [updated]\n", method, path)
+					_, _ = fmt.Fprintf(lw, "%s %s [updated]\n", method, path)
 				}
 			} else {
 				// Create new
@@ -518,7 +518,7 @@ func (s *capabilityStore) ImportCapabilities(ctx context.Context, r io.Reader, l
 					continue
 				}
 				if lw != nil {
-					fmt.Fprintf(lw, "%s %s [created]\n", method, path)
+					_, _ = fmt.Fprintf(lw, "%s %s [created]\n", method, path)
 				}
 			}
 			imported++
@@ -562,7 +562,7 @@ func (s *capabilityStore) markMissingCapabilities(ctx context.Context, lw io.Wri
 			}
 			missed++
 			if lw != nil {
-				fmt.Fprintf(lw, "%s %s [missed]\n", ca.Method, ca.Endpoint)
+				_, _ = fmt.Fprintf(lw, "%s %s [missed]\n", ca.Method, ca.Endpoint)
 			}
 		}
 	}
@@ -660,7 +660,7 @@ func (s *capabilityStore) InvokerForInvoke(invoker *CapabilityInvoker) mcps.Invo
 		if resp == nil {
 			return mcps.BuildToolErrorResult("nil response from invoker"), nil
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		result := map[string]any{}
 
@@ -705,7 +705,7 @@ func (s *capabilityStore) CleanupMissedCapabilities(ctx context.Context, lw io.W
 		if !dryRun {
 			if err := s.DeleteCapability(ctx, ca.StringID()); err != nil {
 				if lw != nil {
-					fmt.Fprintf(lw, "%s %s %q [delete fail: %v]\n",
+					_, _ = fmt.Fprintf(lw, "%s %s %q [delete fail: %v]\n",
 						ca.Method, ca.Endpoint, ca.Summary, err)
 				}
 				logger().Warnw("delete missed capability fail", "id", ca.StringID(), "err", err)
@@ -713,11 +713,11 @@ func (s *capabilityStore) CleanupMissedCapabilities(ctx context.Context, lw io.W
 			}
 		}
 		if lw != nil {
-			fmt.Fprintf(lw, "%s %s %q", ca.Method, ca.Endpoint, ca.Summary)
+			_, _ = fmt.Fprintf(lw, "%s %s %q", ca.Method, ca.Endpoint, ca.Summary)
 			if dryRun {
-				fmt.Fprintf(lw, " [dry-run]\n")
+				_, _ = fmt.Fprintf(lw, " [dry-run]\n")
 			} else {
-				fmt.Fprintf(lw, " [deleted]\n")
+				_, _ = fmt.Fprintf(lw, " [deleted]\n")
 			}
 		}
 	}

@@ -295,7 +295,7 @@ func formatValue(v any) string {
 				sb.WriteString(", ")
 			}
 			first = false
-			sb.WriteString(fmt.Sprintf("%s: %s", k, formatValue(v)))
+			fmt.Fprintf(&sb, "%s: %s", k, formatValue(v))
 		}
 		sb.WriteString("}")
 		return sb.String()
@@ -318,7 +318,7 @@ func (rl ResultLogs) String() string {
 			sb.WriteString(", ")
 		}
 		first = false
-		sb.WriteString(fmt.Sprintf("%s: %s", k, formatValue(v)))
+		fmt.Fprintf(&sb, "%s: %s", k, formatValue(v))
 	}
 	sb.WriteString("}")
 	return sb.String()

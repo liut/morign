@@ -151,7 +151,7 @@ func (p *HTTPChannel) handleVerify(w http.ResponseWriter, r *http.Request) {
 	slog.Info("wecom-http: URL verification succeeded")
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprint(w, plain)
+	_, _ = fmt.Fprint(w, plain)
 }
 
 func (p *HTTPChannel) handleMessage(w http.ResponseWriter, r *http.Request, handler channel.MessageHandler) {
@@ -319,7 +319,7 @@ func (p *HTTPChannel) sendMarkdown(accessToken, toUser, content string) error {
 	if err != nil {
 		return fmt.Errorf("wecom-http: send markdown: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var result struct {
 		ErrCode int    `json:"errcode"`
@@ -350,7 +350,7 @@ func (p *HTTPChannel) sendText(accessToken, toUser, text string) error {
 	if err != nil {
 		return fmt.Errorf("wecom-http: send message: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var result struct {
 		ErrCode int    `json:"errcode"`
@@ -382,7 +382,7 @@ func (p *HTTPChannel) getAccessToken() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("wecom-http: request access_token: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var result struct {
 		ErrCode     int    `json:"errcode"`
@@ -412,7 +412,7 @@ func (p *HTTPChannel) downloadMedia(mediaID string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("download: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return io.ReadAll(resp.Body)
 }
 
@@ -429,7 +429,7 @@ func (p *HTTPChannel) resolveUserName(userID string) string {
 	if err != nil {
 		return userID
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var result struct {
 		ErrCode int    `json:"errcode"`
 		Name    string `json:"name"`
