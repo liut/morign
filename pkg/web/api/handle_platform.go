@@ -196,13 +196,14 @@ func (chh *channelHandler) handleStreamingReply(ctx context.Context, p channel.C
 	for event, err := range loop.Run(ctx, messages, tools) {
 		if err != nil {
 			slog.Error("channel: agent loop error", "err", err)
+			errStr := translateLLMErrorToUser(err)
 			if streamID != "" {
-				if finishErr := sr.FinishStream(ctx, msg.ReplyCtx, streamID, translateLLMErrorToUser(err)); finishErr != nil {
+				if finishErr := sr.FinishStream(ctx, msg.ReplyCtx, streamID, errStr); finishErr != nil {
 					slog.Warn("channel: finish stream after error failed, falling back to Reply", "err", finishErr)
-					channelReplyError(p, msg, "AI processing failed")
+					channelReplyError(p, msg, errStr)
 				}
 			} else {
-				channelReplyError(p, msg, "AI processing failed")
+				channelReplyError(p, msg, errStr)
 			}
 			return
 		}
@@ -322,6 +323,8 @@ func translateLLMErrorToUser(err error) string {
 		return "请求超时，请稍后重试"
 	case strings.Contains(errStr, "rate limit"):
 		return "请求过于频繁，请稍后重试"
+	case strings.Contains(errStr, "overloaded"):
+		return "当前负载较高，请稍后重试"
 	case strings.Contains(errStr, "model not found"):
 		return "AI 服务暂时不可用"
 	default:
