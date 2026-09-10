@@ -13,9 +13,12 @@ import (
 // type DocMatches = corpus.DocMatches
 // type CobDocVector = corpus.DocVector
 // type CobDocument = corpus.Document
+// type ImportFailure = corpus.ImportFailure
+// type ImportFailures = corpus.ImportFailures
+// type CobImportTask = corpus.ImportTask
 
 func init() {
-	RegisterModel((*corpus.Document)(nil), (*corpus.DocVector)(nil), (*corpus.ChatLog)(nil))
+	RegisterModel((*corpus.Document)(nil), (*corpus.DocVector)(nil), (*corpus.ChatLog)(nil), (*corpus.ImportTask)(nil))
 }
 
 type CorpuStore interface {
@@ -35,6 +38,12 @@ type CorpuStore interface {
 	GetChatLog(ctx context.Context, id string) (obj *corpus.ChatLog, err error)
 	ListChatLog(ctx context.Context, spec *ChatLogSpec) (data corpus.ChatLogs, total int, err error)
 	DeleteChatLog(ctx context.Context, id string) error
+
+	ListImportTask(ctx context.Context, spec *CobImportTaskSpec) (data corpus.ImportTasks, total int, err error)
+	GetImportTask(ctx context.Context, id string) (obj *corpus.ImportTask, err error)
+	CreateImportTask(ctx context.Context, in corpus.ImportTaskBasic) (obj *corpus.ImportTask, err error)
+	UpdateImportTask(ctx context.Context, id string, in corpus.ImportTaskSet) error
+	DeleteImportTask(ctx context.Context, id string) error
 }
 
 type CobDocumentSpec struct {
@@ -79,6 +88,36 @@ func (spec *ChatLogSpec) Sift(q *ormQuery) *ormQuery {
 	q, _ = siftOID(q, "csid", spec.ChatID, false)
 
 	return q
+}
+
+type CobImportTaskSpec struct {
+	PageSpec
+	ModelSpec
+
+	// 原始文件名
+	Filename string `extensions:"x-order=A" form:"filename" json:"filename"`
+	// 任务状态
+	//  * `pending` - 排队中
+	//  * `processing` - 处理中
+	//  * `succeeded` - 已完成
+	//  * `failed` - 已失败
+	Status corpus.ImportTaskStatus `extensions:"x-order=B" form:"status" json:"status" swaggertype:"string"`
+}
+
+func (spec *CobImportTaskSpec) Sift(q *ormQuery) *ormQuery {
+	q = spec.ModelSpec.Sift(q)
+	q, _ = siftMatch(q, "filename", spec.Filename, false)
+	q, _ = siftEqual(q, "status", spec.Status, false)
+
+	return q
+}
+func (spec *CobImportTaskSpec) CanSort(k string) bool {
+	switch k {
+	case "filename", "status":
+		return true
+	default:
+		return spec.ModelSpec.CanSort(k)
+	}
 }
 
 type corpuStore struct {
@@ -163,5 +202,36 @@ func (s *corpuStore) ListChatLog(ctx context.Context, spec *ChatLogSpec) (data c
 }
 func (s *corpuStore) DeleteChatLog(ctx context.Context, id string) error {
 	obj := new(corpus.ChatLog)
+	return s.w.db.DeleteModel(ctx, obj, id)
+}
+
+func (s *corpuStore) ListImportTask(ctx context.Context, spec *CobImportTaskSpec) (data corpus.ImportTasks, total int, err error) {
+	total, err = s.w.db.ListModel(ctx, spec, &data)
+	return
+}
+func (s *corpuStore) GetImportTask(ctx context.Context, id string) (obj *corpus.ImportTask, err error) {
+	obj = new(corpus.ImportTask)
+	err = dbGetWithPKID(ctx, s.w.db, obj, id)
+
+	return
+}
+func (s *corpuStore) CreateImportTask(ctx context.Context, in corpus.ImportTaskBasic) (obj *corpus.ImportTask, err error) {
+	obj = corpus.NewImportTaskWithBasic(in)
+	dbMetaUp(ctx, s.w.db, obj)
+	err = dbInsert(ctx, s.w.db, obj)
+	return
+}
+func (s *corpuStore) UpdateImportTask(ctx context.Context, id string, in corpus.ImportTaskSet) error {
+	exist := new(corpus.ImportTask)
+	if err := dbGetWithPKID(ctx, s.w.db, exist, id); err != nil {
+		return err
+	}
+	exist.SetIsUpdate(true)
+	exist.SetWith(in)
+	dbMetaUp(ctx, s.w.db, exist)
+	return dbUpdate(ctx, s.w.db, exist)
+}
+func (s *corpuStore) DeleteImportTask(ctx context.Context, id string) error {
+	obj := new(corpus.ImportTask)
 	return s.w.db.DeleteModel(ctx, obj, id)
 }

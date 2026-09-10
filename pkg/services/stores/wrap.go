@@ -37,6 +37,7 @@ var (
 	ErrNotFound  = pgx.ErrNotFound
 	ErrEmptyKey  = pgx.ErrEmptyKey
 	ErrDuplicate = pgx.ErrDuplicate
+	ErrInvalidID = pgx.ErrInvalidID
 
 	dbGet           = pgx.Get
 	dbFirst         = pgx.First
