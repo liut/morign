@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.9.0 (2026-09-10)
+
+### 新功能
+
+- **Skills**: 新增 Agent Skills 支持 — SKILL.md 及其资源按技能存库（`agent_skill` / `agent_skill_file` 表），系统提示只注入元数据，全文按需加载：清单低于阈值时直接注入，否则通过 `skill_list`、`skill_read`、`skill_file_list`、`skill_file_read` 内置工具或 `/skill` 指令加载
+- **Skills**: 新增技能 REST API — 用户级 `/api/skills`（owner 语义，含描述长度校验）与 keeper 专属 `/api/admin/skills`，可见性按频道位掩码控制；二进制资源只存储、不注入 LLM 上下文
+- **Memory**: 新增记忆分层与衰减 — 写入时按规则评分（长度、标点、关键词）路由 `working`/`short-term`/`long-term`，召回时按艾宾浩斯曲线 `R = e^(-t/24S)` 重排，命中后重置强化时钟，按访问次数自动升级层级，低于遗忘阈值的记忆乘 0.1 惩罚
+- **Memory**: `memory_list` 支持 tier 过滤，`memory_recall` 输出 tier 字段；阈值与提升次数均可通过环境变量配置
+- **Corpus**: 新增文档管理 API — `/api/corpus/documents` 的列表、详情、更新与删除，写操作 keeper 专属
+- **Corpus**: 新增异步 CSV 导入 — `POST /api/corpus/imports` 上传 CSV（10 MiB 上限、BOM 处理、表头校验）即创建任务，由串行 worker 逐个处理，支持重复行跳过、失败明细（最多 500 条、原因截断）与崩溃后任务回收；列表与 `GET /api/corpus/imports/{id}` 查询进度，读取接口不返回 CSV 原文
+- **Session**: `/api/session` 新增 `keeper` 字段，前端可据此决定是否展示管理功能
+
+### Bug 修复
+
+- **Memory**: `reinforceMemory` 改用 `SetWith` 更新，使 `last_accessed_at`、`access_count`、`tier`、`decay_rate` 的变更可被追踪，并移除多余的 `CalcReinforce` 调用（召回即重置强化时钟）
+- **Memory**: 修复 `Tier` 列默认值未加引号，PostgreSQL 会把 `default:working` 当作列引用导致建表失败
+- **Memory**: `memory_forget` 同步删除 `corpus_vector_400` 记录
+- **Feishu**: 移除 WebSocket `Start` 恒为真的错误判断，改为直接记录返回的错误
+
+### 重构
+
+- **Stores**: 从 `IsKeeper` 拆出 `UserIsKeeper`，无需 context 即可复用
+- **Stores**: capability invoker 闭包提取为命名函数与方法（`parseMatchArgs`、`buildMatchResults`、`CapabilityInvoker.InvokeAsTool`）
+
+### 文档
+
+- README / README_CN 同步当前实现：修正向量阈值、匹配数量、DSN 等默认值，更新 CLI 命令列表，补充 keeper、skills、记忆分层等特性，接口细节改为指向 swagger
+- AGENTS.md 补充代码生成流程（`docs/*.yaml` → `make codegen`、`make gen-apidoc`）、提交前检查与集成测试依赖说明
+
+### 维护
+
+- 升级 `cupogo/andvari` 依赖，适配 `pgx.In` → `pgx.List`
+
+### 升级说明
+
+- 启动时自动执行 schema 初始化与 migration（新增记忆分层列、skills 与导入任务表），也可手动执行 `./morign initdb`
+
+---
+
 ## v0.8.0 (2026-07-28)
 
 ### 新功能
