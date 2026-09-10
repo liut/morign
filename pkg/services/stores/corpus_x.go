@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/pmezard/go-difflib/difflib"
 	"github.com/spf13/cast"
@@ -19,6 +20,9 @@ import (
 
 const (
 	Separator = "\n* "
+
+	maxImportErrors    = 500
+	maxImportReasonLen = 200
 )
 
 var (
@@ -56,8 +60,8 @@ type ExportArg struct {
 	Format string // csv,jsonl
 }
 
-// validHead validates if CSV header is valid
-func validHead(rec []string) bool {
+// ValidHead validates if CSV header is valid
+func ValidHead(rec []string) bool {
 	if len(rec) < len(qaHeads) {
 		return false
 	}
@@ -78,6 +82,9 @@ type CorpuStoreX interface {
 	SyncEmbeddingDocments(ctx context.Context, spec *CobDocumentSpec) error
 	MatchDocments(ctx context.Context, ms MatchSpec) (data corpus.Documents, err error)
 	MatchVectorWith(ctx context.Context, vec corpus.Vector, threshold float32, limit int) (data corpus.DocMatches, err error)
+	ClaimImportTask(ctx context.Context) (obj *corpus.ImportTask, err error)
+	ProcessImportTask(ctx context.Context, task *corpus.ImportTask) error
+	RecoverImportTasks(ctx context.Context) (int, error)
 	InvokerForSearch() mcps.Invoker
 	InvokerForCreate() mcps.Invoker
 }
@@ -90,7 +97,7 @@ func (s *corpuStore) ImportDocs(ctx context.Context, r io.Reader, lw io.Writer) 
 		logger().Infow("read fail", "err", err)
 		return err
 	}
-	if !validHead(rec) {
+	if !ValidHead(rec) {
 		return fmt.Errorf("invalid csv head: %+v", rec)
 	}
 
@@ -121,6 +128,161 @@ func (s *corpuStore) ImportDocs(ctx context.Context, r io.Reader, lw io.Writer) 
 		}
 		valid++
 	}
+}
+
+// ClaimImportTask 原子认领最早的 pending 导入任务，无任务时返回 ErrNotFound
+func (s *corpuStore) ClaimImportTask(ctx context.Context) (obj *corpus.ImportTask, err error) {
+	obj = new(corpus.ImportTask)
+	err = s.w.db.NewUpdate().
+		Model(obj).
+		Set("status = ?", corpus.ImportTaskStatusProcessing).
+		Set("started_at = ?", time.Now()).
+		Where("status = ?", corpus.ImportTaskStatusPending).
+		Where("id = (SELECT id FROM ? WHERE status = ? ORDER BY created, id LIMIT 1 FOR UPDATE SKIP LOCKED)",
+			pgIdent(corpus.ImportTaskTable), corpus.ImportTaskStatusPending).
+		Returning("*").
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		logger().Infow("claim import task fail", "err", err)
+		return nil, err
+	}
+	return obj, nil
+}
+
+// ProcessImportTask 处理单个导入任务：解析 CSV、逐行查重/导入并写回计数、明细与状态
+func (s *corpuStore) ProcessImportTask(ctx context.Context, task *corpus.ImportTask) error {
+	rd := csv.NewReader(strings.NewReader(task.Data))
+	rd.FieldsPerRecord = -1
+
+	rec, err := rd.Read()
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			// 空文件：正常结束，计数全 0
+			return s.finishImportTask(ctx, task, corpus.ImportTaskStatusSucceeded, 0, 0, 0, 0, nil)
+		}
+		return s.finishImportTask(ctx, task, corpus.ImportTaskStatusFailed, 0, 0, 0, 0, nil)
+	}
+	if !ValidHead(rec) {
+		logger().Infow("invalid import task head", "id", task.StringID())
+		return s.finishImportTask(ctx, task, corpus.ImportTaskStatusFailed, 0, 0, 0, 0, nil)
+	}
+
+	var (
+		total, success, failed, skipped int
+		errs                             []corpus.ImportFailure
+	)
+	for {
+		row, err := rd.Read()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			// CSV 中途解析错误 → 任务失败
+			logger().Infow("import task csv parse fail", "id", task.StringID(), "err", err)
+			return s.finishImportTask(ctx, task, corpus.ImportTaskStatusFailed, total, success, failed, skipped, errs)
+		}
+		line, _ := rd.FieldPos(0)
+		total++
+		if !validImportRow(row) {
+			failed++
+			errs = appendImportError(errs, corpus.ImportFailure{
+				Line:   line,
+				Title:  importRowTitle(row),
+				Reason: "数据无效",
+			})
+			continue
+		}
+
+		basic := corpus.DocumentBasic{
+			Title:   row[0],
+			Heading: row[1],
+			Content: replText.Replace(row[2]),
+		}
+		exist := new(corpus.Document)
+		err = dbGet(ctx, s.w.db, exist, "title = ? AND heading = ?", basic.Title, basic.Heading)
+		switch {
+		case err == nil:
+			skipped++
+			errs = appendImportError(errs, corpus.ImportFailure{
+				Line:   line,
+				Title:  basic.Title,
+				Reason: "重复文档: title+heading 已存在，跳过",
+			})
+		case errors.Is(err, ErrNotFound):
+			if _, cerr := s.CreateDocument(ctx, basic); cerr != nil {
+				failed++
+				errs = appendImportError(errs, corpus.ImportFailure{
+					Line:   line,
+					Title:  basic.Title,
+					Reason: cerr.Error(),
+				})
+			} else {
+				success++
+			}
+		default:
+			failed++
+			errs = appendImportError(errs, corpus.ImportFailure{
+				Line:   line,
+				Title:  basic.Title,
+				Reason: err.Error(),
+			})
+		}
+	}
+
+	return s.finishImportTask(ctx, task, corpus.ImportTaskStatusSucceeded, total, success, failed, skipped, errs)
+}
+
+// RecoverImportTasks 将遗留的 processing 任务重置为 pending，返回受影响数量
+func (s *corpuStore) RecoverImportTasks(ctx context.Context) (int, error) {
+	res, err := s.w.db.NewUpdate().
+		Model((*corpus.ImportTask)(nil)).
+		Set("status = ?", corpus.ImportTaskStatusPending).
+		Where("status = ?", corpus.ImportTaskStatusProcessing).
+		Exec(ctx)
+	if err != nil {
+		logger().Infow("recover import tasks fail", "err", err)
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+func validImportRow(row []string) bool {
+	return len(row) >= 3 && len(row[0]) > 0 && len(row[1]) > 0 && len(row[2]) > 0
+}
+
+func importRowTitle(row []string) string {
+	if len(row) > 0 {
+		return row[0]
+	}
+	return ""
+}
+
+func appendImportError(errs []corpus.ImportFailure, f corpus.ImportFailure) []corpus.ImportFailure {
+	if r := []rune(f.Reason); len(r) > maxImportReasonLen {
+		f.Reason = string(r[:maxImportReasonLen])
+	}
+	if len(errs) >= maxImportErrors {
+		return errs
+	}
+	return append(errs, f)
+}
+
+func (s *corpuStore) finishImportTask(ctx context.Context, task *corpus.ImportTask,
+	status corpus.ImportTaskStatus, total, success, failed, skipped int, errs []corpus.ImportFailure) error {
+	now := time.Now()
+	return s.UpdateImportTask(ctx, task.StringID(), corpus.ImportTaskSet{
+		Status:     &status,
+		Total:      &total,
+		Success:    &success,
+		Failed:     &failed,
+		Skipped:    &skipped,
+		Errors:     &errs,
+		FinishedAt: &now,
+	})
 }
 
 // importLine imports a single line of document data

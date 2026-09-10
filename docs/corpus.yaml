@@ -1,6 +1,27 @@
 depends:
   comm: github.com/cupogo/andvari/models/comm
   oid: github.com/cupogo/andvari/models/oid
+  time: time
+
+enums:
+
+  - comment: 导入任务状态
+    name: ImportTaskStatus
+    start: 1
+    type: int8
+    values:
+      - label: 排队中
+        suffix: Pending
+      - label: 处理中
+        suffix: Processing
+      - label: 已完成
+        suffix: Succeeded
+      - label: 已失败
+        suffix: Failed
+    stringer: true
+    decodable: true
+    textMarshaler: true
+    textUnmarshaler: true
 
 gename: corpus
 modelpkg: corpus
@@ -116,6 +137,86 @@ models:
       - type: comm.MetaField
     oidcat: event
 
+  - name: ImportTask
+    comment: '文档导入任务'
+    tableTag: 'corpus_import,alias:ci'
+    fields:
+      - type: comm.DefaultModel
+      - comment: 原始文件名
+        name: Filename
+        type: string
+        tags: {json: 'filename', pg: ',notnull,type:varchar(255)'}
+        isset: true
+        query: 'match'
+        sortable: true
+      - comment: 任务状态
+        name: Status
+        type: ImportTaskStatus
+        tags: {json: 'status', pg: ',notnull,type:smallint,default:1'}
+        isset: true
+        query: 'equal'
+        sortable: true
+      - comment: 原始 CSV 内容（worker 读取处理）
+        name: Data
+        type: string
+        tags: {json: 'data,omitempty', pg: ',notnull,type:text'}
+        isset: true
+      - comment: 总数据行数
+        name: Total
+        type: int
+        tags: {json: 'total', pg: ',notnull,default:0'}
+        isset: true
+      - comment: 成功行数
+        name: Success
+        type: int
+        tags: {json: 'success', pg: ',notnull,default:0'}
+        isset: true
+      - comment: 失败行数
+        name: Failed
+        type: int
+        tags: {json: 'failed', pg: ',notnull,default:0'}
+        isset: true
+      - comment: 跳过行数（重复行）
+        name: Skipped
+        type: int
+        tags: {json: 'skipped', pg: ',notnull,default:0'}
+        isset: true
+      - comment: 失败明细
+        name: Errors
+        type: '[]ImportFailure'
+        tags: {json: 'errors,omitempty', pg: ",notnull,type:jsonb,default:'[]'"}
+        isset: true
+      - comment: 开始处理时间
+        name: StartedAt
+        type: '*time.Time'
+        tags: {json: 'startedAt,omitempty', pg: 'started_at,type:timestamptz'}
+        isset: true
+      - comment: 完成时间
+        name: FinishedAt
+        type: '*time.Time'
+        tags: {json: 'finishedAt,omitempty', pg: 'finished_at,type:timestamptz'}
+        isset: true
+      - type: comm.MetaField
+    oidcat: task
+    specNs: cob
+
+  - name: ImportFailure
+    comment: '导入失败明细'
+    fields:
+      - comment: 行号（表头为第 1 行，数据从第 2 行起）
+        name: Line
+        type: int
+        tags: {json: 'line'}
+      - comment: 该行标题
+        name: Title
+        type: string
+        tags: {json: 'title'}
+      - comment: 失败原因
+        name: Reason
+        type: string
+        tags: {json: 'reason'}
+    withPlural: true
+
 stores:
   - name: corpuStore
     embed: CorpuStoreX
@@ -124,6 +225,7 @@ stores:
       - { name: Document, type: LGCUD }
       - { name: DocVector, type: GCD }
       - { name: ChatLog, type: CGLD }
+      - { name: ImportTask, type: LGCUD }
 
 webcode: chi
 webapi:

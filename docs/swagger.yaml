@@ -1197,6 +1197,467 @@ paths:
           description: 服务端错误
           schema:
             $ref: '#/definitions/api.Failure'
+  /api/corpus/documents:
+    get:
+      description: <sortable>id,created,updated,heading</sortable>
+      consumes:
+        - application/json
+      produces:
+        - application/json
+      tags:
+        - 默认 文档生成
+      summary: 查询 文档 列表
+      parameters:
+        - type: string
+          description: 登录票据凭证
+          name: token
+          in: header
+          required: true
+        - type: string
+          example: aaa,bbb,ccc
+          x-order: "0"
+          description: 主键编号`ids`（以逗号分隔的字串），仅供 Form 或 Query 使用, example:"aaa,bbb,ccc"
+          name: ids
+          in: query
+        - type: string
+          x-order: "2"
+          description: 创建者ID
+          name: creatorID
+          in: query
+        - type: string
+          x-order: "3"
+          description: 创建时间 形式： yyyy-mm-dd, 1_day, 2_weeks, 3_months
+          name: created
+          in: query
+        - type: string
+          x-order: "4"
+          description: 更新时间 形式： yyyy-mm-dd, 1_day, 2_weeks, 3_months
+          name: updated
+          in: query
+        - type: boolean
+          x-order: "5"
+          description: IsDelete 查询删除的记录
+          name: isDelete
+          in: query
+        - type: string
+          x-order: A
+          description: 主标题 名称
+          name: title
+          in: query
+        - type: string
+          x-order: B
+          description: 小节标题 属性 类别
+          name: heading
+          in: query
+        - type: string
+          x-order: C
+          description: 内容 值
+          name: content
+          in: query
+        - type: integer
+          example: 1
+          x-order: '['
+          description: 第几页
+          name: page
+          in: query
+        - type: integer
+          x-order: ']'
+          description: 跳过多少条记录，如果提供 page 此项跳过
+          name: skip
+          in: query
+        - type: integer
+          x-order: _
+          description: 分页大小，默认20
+          name: limit
+          in: query
+        - type: string
+          x-order: '|'
+          description: 排序，允许最多两个字段排序 field1 [asc | desc] [,field2 [asc | desc] ...]
+          name: sort
+          in: query
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+              - $ref: '#/definitions/api.Done'
+              - type: object
+                properties:
+                  result:
+                    allOf:
+                      - $ref: '#/definitions/api.ResultData'
+                      - type: object
+                        properties:
+                          data:
+                            type: array
+                            items:
+                              $ref: '#/definitions/corpusDocument'
+        "400":
+          description: 请求或参数错误
+          schema:
+            $ref: '#/definitions/api.Failure'
+        "401":
+          description: 未登录
+          schema:
+            $ref: '#/definitions/api.Failure'
+        "404":
+          description: 目标未找到
+          schema:
+            $ref: '#/definitions/api.Failure'
+        "503":
+          description: 服务端错误
+          schema:
+            $ref: '#/definitions/api.Failure'
+  /api/corpus/documents/{id}:
+    get:
+      consumes:
+        - application/json
+      produces:
+        - application/json
+      tags:
+        - 默认 文档生成
+      summary: 获取 文档 详情
+      parameters:
+        - type: string
+          description: 登录票据凭证
+          name: token
+          in: header
+          required: true
+        - type: string
+          description: 编号
+          name: id
+          in: path
+          required: true
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+              - $ref: '#/definitions/api.Done'
+              - type: object
+                properties:
+                  result:
+                    $ref: '#/definitions/corpusDocument'
+        "400":
+          description: 请求或参数错误
+          schema:
+            $ref: '#/definitions/api.Failure'
+        "401":
+          description: 未登录
+          schema:
+            $ref: '#/definitions/api.Failure'
+        "404":
+          description: 目标未找到
+          schema:
+            $ref: '#/definitions/api.Failure'
+        "503":
+          description: 服务端错误
+          schema:
+            $ref: '#/definitions/api.Failure'
+    put:
+      consumes:
+        - application/json
+        - multipart/form-data
+      produces:
+        - application/json
+      tags:
+        - 默认 文档生成
+      summary: "更新 文档 \U0001F511"
+      operationId: corpus-documents-id-put
+      parameters:
+        - type: string
+          description: 登录票据凭证
+          name: token
+          in: header
+          required: true
+        - type: string
+          description: 编号
+          name: id
+          in: path
+          required: true
+        - description: Object
+          name: query
+          in: body
+          required: true
+          schema:
+            $ref: '#/definitions/corpusDocumentSet'
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+              - $ref: '#/definitions/api.Done'
+              - type: object
+                properties:
+                  result:
+                    type: string
+        "400":
+          description: 请求或参数错误
+          schema:
+            $ref: '#/definitions/api.Failure'
+        "401":
+          description: 未登录
+          schema:
+            $ref: '#/definitions/api.Failure'
+        "403":
+          description: 无权限
+          schema:
+            $ref: '#/definitions/api.Failure'
+        "503":
+          description: 服务端错误
+          schema:
+            $ref: '#/definitions/api.Failure'
+    delete:
+      consumes:
+        - application/json
+      produces:
+        - application/json
+      tags:
+        - 默认 文档生成
+      summary: "删除 文档 \U0001F511"
+      operationId: corpus-documents-id-delete
+      parameters:
+        - type: string
+          description: 登录票据凭证
+          name: token
+          in: header
+          required: true
+        - type: string
+          description: 编号
+          name: id
+          in: path
+          required: true
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Done'
+        "400":
+          description: 请求或参数错误
+          schema:
+            $ref: '#/definitions/api.Failure'
+        "401":
+          description: 未登录
+          schema:
+            $ref: '#/definitions/api.Failure'
+        "403":
+          description: 无权限
+          schema:
+            $ref: '#/definitions/api.Failure'
+        "503":
+          description: 服务端错误
+          schema:
+            $ref: '#/definitions/api.Failure'
+  /api/corpus/imports:
+    get:
+      description: <sortable>created,filename,status</sortable>
+      consumes:
+        - application/json
+      produces:
+        - application/json
+      tags:
+        - 语料 文档导入
+      summary: "查询导入任务列表 \U0001F511"
+      parameters:
+        - type: string
+          description: 登录票据凭证
+          name: token
+          in: header
+          required: true
+        - type: string
+          example: aaa,bbb,ccc
+          x-order: "0"
+          description: 主键编号`ids`（以逗号分隔的字串），仅供 Form 或 Query 使用, example:"aaa,bbb,ccc"
+          name: ids
+          in: query
+        - type: string
+          x-order: "2"
+          description: 创建者ID
+          name: creatorID
+          in: query
+        - type: string
+          x-order: "3"
+          description: 创建时间 形式： yyyy-mm-dd, 1_day, 2_weeks, 3_months
+          name: created
+          in: query
+        - type: string
+          x-order: "4"
+          description: 更新时间 形式： yyyy-mm-dd, 1_day, 2_weeks, 3_months
+          name: updated
+          in: query
+        - type: boolean
+          x-order: "5"
+          description: IsDelete 查询删除的记录
+          name: isDelete
+          in: query
+        - type: string
+          x-order: A
+          description: 原始文件名
+          name: filename
+          in: query
+        - type: string
+          x-order: B
+          description: |-
+            任务状态
+             * `pending` - 排队中
+             * `processing` - 处理中
+             * `succeeded` - 已完成
+             * `failed` - 已失败
+          name: status
+          in: query
+        - type: integer
+          example: 1
+          x-order: '['
+          description: 第几页
+          name: page
+          in: query
+        - type: integer
+          x-order: ']'
+          description: 跳过多少条记录，如果提供 page 此项跳过
+          name: skip
+          in: query
+        - type: integer
+          x-order: _
+          description: 分页大小，默认20
+          name: limit
+          in: query
+        - type: string
+          x-order: '|'
+          description: 排序，允许最多两个字段排序 field1 [asc | desc] [,field2 [asc | desc] ...]
+          name: sort
+          in: query
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+              - $ref: '#/definitions/api.Done'
+              - type: object
+                properties:
+                  result:
+                    allOf:
+                      - $ref: '#/definitions/api.ResultData'
+                      - type: object
+                        properties:
+                          data:
+                            type: array
+                            items:
+                              $ref: '#/definitions/api.corpusImportTaskView'
+        "400":
+          description: 请求或参数错误
+          schema:
+            $ref: '#/definitions/api.Failure'
+        "401":
+          description: 未登录
+          schema:
+            $ref: '#/definitions/api.Failure'
+        "403":
+          description: 无权限
+          schema:
+            $ref: '#/definitions/api.Failure'
+        "503":
+          description: 服务端错误
+          schema:
+            $ref: '#/definitions/api.Failure'
+    post:
+      consumes:
+        - multipart/form-data
+      produces:
+        - application/json
+      tags:
+        - 语料 文档导入
+      summary: "上传 CSV 创建导入任务 \U0001F511"
+      parameters:
+        - type: string
+          description: 登录票据凭证
+          name: token
+          in: header
+          required: true
+        - type: file
+          description: CSV 文件（title,heading,content，UTF-8）
+          name: file
+          in: formData
+          required: true
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+              - $ref: '#/definitions/api.Done'
+              - type: object
+                properties:
+                  result:
+                    $ref: '#/definitions/api.corpusImportTaskView'
+        "400":
+          description: 请求或参数错误
+          schema:
+            $ref: '#/definitions/api.Failure'
+        "401":
+          description: 未登录
+          schema:
+            $ref: '#/definitions/api.Failure'
+        "403":
+          description: 无权限
+          schema:
+            $ref: '#/definitions/api.Failure'
+        "413":
+          description: 文件过大
+          schema:
+            $ref: '#/definitions/api.Failure'
+        "503":
+          description: 服务端错误
+          schema:
+            $ref: '#/definitions/api.Failure'
+  /api/corpus/imports/{id}:
+    get:
+      consumes:
+        - application/json
+      produces:
+        - application/json
+      tags:
+        - 语料 文档导入
+      summary: "获取导入任务详情 \U0001F511"
+      parameters:
+        - type: string
+          description: 登录票据凭证
+          name: token
+          in: header
+          required: true
+        - type: string
+          description: 任务ID
+          name: id
+          in: path
+          required: true
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+              - $ref: '#/definitions/api.Done'
+              - type: object
+                properties:
+                  result:
+                    $ref: '#/definitions/api.corpusImportTaskView'
+        "400":
+          description: 请求或参数错误
+          schema:
+            $ref: '#/definitions/api.Failure'
+        "401":
+          description: 未登录
+          schema:
+            $ref: '#/definitions/api.Failure'
+        "403":
+          description: 无权限
+          schema:
+            $ref: '#/definitions/api.Failure'
+        "404":
+          description: 目标未找到
+          schema:
+            $ref: '#/definitions/api.Failure'
+        "503":
+          description: 服务端错误
+          schema:
+            $ref: '#/definitions/api.Failure'
   /api/history/{cid}:
     get:
       consumes:
@@ -2268,6 +2729,35 @@ definitions:
         type: array
         items:
           type: string
+  api.corpusImportTaskView:
+    type: object
+    properties:
+      createdAt:
+        type: string
+      errors:
+        type: array
+        items:
+          $ref: '#/definitions/corpusImportFailure'
+      failed:
+        type: integer
+      filename:
+        type: string
+      finishedAt:
+        type: string
+      id:
+        type: string
+      skipped:
+        type: integer
+      startedAt:
+        type: string
+      status:
+        $ref: '#/definitions/corpus.ImportTaskStatus'
+      success:
+        type: integer
+      total:
+        type: integer
+      updatedAt:
+        type: string
   api.respSession:
     type: object
     properties:
@@ -2276,6 +2766,9 @@ definitions:
         properties:
           auth:
             description: need auth
+            type: boolean
+          keeper:
+            description: user is keeper
             type: boolean
           model:
             description: for chatgpt-web
@@ -2617,6 +3110,95 @@ definitions:
         allOf:
           - $ref: '#/definitions/Meta'
         x-order: '|'
+  corpus.ImportTaskStatus:
+    type: integer
+    format: int32
+    enum:
+      - 1
+      - 2
+      - 3
+      - 4
+    x-enum-comments:
+      ImportTaskStatusFailed: 4 已失败
+      ImportTaskStatusPending: 1 排队中
+      ImportTaskStatusProcessing: 2 处理中
+      ImportTaskStatusSucceeded: 3 已完成
+    x-enum-descriptions:
+      - 1 排队中
+      - 2 处理中
+      - 3 已完成
+      - 4 已失败
+    x-enum-varnames:
+      - ImportTaskStatusPending
+      - ImportTaskStatusProcessing
+      - ImportTaskStatusSucceeded
+      - ImportTaskStatusFailed
+  corpusDocument:
+    type: object
+    properties:
+      createdAt:
+        description: 创建时间
+        type: string
+        x-order: ""
+      id:
+        description: 主键
+        type: string
+        x-order: '!'
+      updatedAt:
+        description: 变更时间
+        type: string
+        x-order: .
+      title:
+        description: 主标题 名称
+        type: string
+        x-order: A
+      heading:
+        description: 小节标题 属性 类别
+        type: string
+        x-order: B
+      content:
+        description: 内容 值
+        type: string
+        x-order: C
+      creatorID:
+        description: 创建者ID
+        type: string
+        x-order: _
+      meta:
+        description: Meta 元信息
+        allOf:
+          - $ref: '#/definitions/Meta'
+        x-order: '|'
+  corpusDocumentSet:
+    type: object
+    properties:
+      title:
+        description: 主标题 名称
+        type: string
+        x-order: A
+      heading:
+        description: 小节标题 属性 类别
+        type: string
+        x-order: B
+      content:
+        description: 内容 值
+        type: string
+        x-order: C
+  corpusImportFailure:
+    type: object
+    properties:
+      line:
+        description: 行号（表头为第 1 行，数据从第 2 行起）
+        type: integer
+        x-order: A
+      title:
+        description: 该行标题
+        type: string
+        x-order: B
+      reason:
+        description: 失败原因
+        type: string
+        x-order: C
   mcps.ToolDescriptor:
     type: object
     properties:
@@ -2893,12 +3475,12 @@ definitions:
       kind:
         description: |-
           文件类型
-           * `binary` - 二进制
            * `text` - 文本
+           * `binary` - 二进制
         type: string
         enum:
-          - binary
           - text
+          - binary
         x-order: E
       size:
         description: 字节数

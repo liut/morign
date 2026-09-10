@@ -419,11 +419,16 @@ func webRun(cc *cli.Context) error {
 	})
 
 	ctx := context.Background()
+	wctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go stores.NewImportWorker(stores.Sgt().Corpus()).Run(wctx)
+
 	go func() {
 		quit := make(chan os.Signal, 2)
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		<-quit
 		logger().Info("shuting down server...")
+		cancel()
 		if err := srv.Stop(ctx); err != nil {
 			logger().Infow("server shutdown:", "err", err)
 		}
