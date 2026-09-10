@@ -3,18 +3,20 @@
 AI chat backend with knowledge base Q&A, MCP tools, and OAuth authentication.
 
 ## Features
- - Import documents of knowledge base from a table (CSV), save them into PostgreSQL
- - Based on the title and content of the document, generate vector of documents with Embedding API
- - Generate document vectors using Embedding API
- - Implement high-quality Q&A using vector search
- - Welcome message and preset messages
- - Chat History for Conversation (based on redis)
- - RESTful API
- - Support text/event-stream
- - Login with OAuth2 client for general Security Provider
- - Built-in MCP (Model Context Protocol) tool support
- - Multi-channel adapter support (WeCom WebSocket/Webhook, Feishu WebSocket/Webhook)
- - Preset config `${VAR}` env var expansion for secrets
+
+- Import knowledge base documents from a CSV, either with the `import` command or through the keeper-only async import API
+- Generate document vectors with the Embedding API
+- High-quality Q&A based on vector search, with optional LLM re-rank
+- Welcome message and preset messages
+- Chat history for conversation (based on Redis)
+- RESTful API with Swagger documentation, supporting text/event-stream
+- Login with OAuth2 client for a general security provider
+- Built-in MCP (Model Context Protocol) tool support
+- Multi-channel adapter support (WeCom WebSocket/Webhook, Feishu WebSocket/Webhook)
+- Preset config `${VAR}` env var expansion for secrets
+- Keeper role guarding write operations and admin endpoints
+- Skills support: admin API plus per-channel injection
+- Memory with tier decay, reinforcement and forgetting
 
 ## Supported Frontend
 
@@ -39,6 +41,9 @@ AI chat backend with knowledge base Q&A, MCP tools, and OAuth authentication.
 
 ## APIs
 
+> Full reference: [docs/swagger.yaml](./docs/swagger.yaml), regenerated with `make gen-apidoc`.
+> Endpoints marked 🔑 require the keeper role.
+
 ### Get session information
 
 <details>
@@ -56,7 +61,7 @@ AI chat backend with knowledge base Q&A, MCP tools, and OAuth authentication.
 
 > | http code     | content-type                      | response                                           |
 > |---------------|-----------------------------------|---------------------------------------------------------------------|
-> | `200`         | `application/json`        | `{"status":"Success","data":{"auth":false,"user":{...}}}` (logged in)                        |
+> | `200`         | `application/json`        | `{"status":"Success","data":{"auth":false,"user":{...},"keeper":false}}` (logged in)                        |
 > | `200`         | `application/json`        | `{"status":"Success","data":{"auth":true,"uri":"/api/auth/login"}}` (not logged in)        |
 
 
@@ -104,6 +109,12 @@ AI chat backend with knowledge base Q&A, MCP tools, and OAuth authentication.
 
 
 </details>
+
+### Corpus import 🔑
+
+CSV upload is asynchronous: `POST /api/corpus/imports` takes a multipart `file` field (UTF-8 CSV, header `title,heading,content`, max 10 MiB) and returns a task in `pending` state; a background worker picks up pending tasks one at a time. Poll `GET /api/corpus/imports` (filter by `status`/`filename`, page with `limit`/`page`, sort with `sort`) or `GET /api/corpus/imports/{id}` for counts and failure details. CSV content is stored with the task and never returned by the read endpoints.
+
+See the swagger file for request/response schemas and status codes.
 
 ## Getting started
 
@@ -183,23 +194,27 @@ CREATE EXTENSION vector;
 ```plan
 
 USAGE:
-   morign [global options] command [command options] [arguments...]
+   morign [global options] command [command options]
 
 COMMANDS:
-   usage, env                   show usage
-   initdb                       init database schema
-   import                       import documents from a csv
-   export                       export documents to csv/jsonl
-   embedding, embedding-prompt  read prompt documents and embedding
-   agent, llm, chat            test LLM agent
-   web, run                     run a web server
-   version, ver                 show version
-   help, h                      Shows a list of commands or help for one command
+   usage, env                         show usage
+   initdb                             init database schema
+   import                             import documents from a csv
+   import-swagger, import-capability  import API capabilities from swagger yaml/json
+   export, exportDocs                 export documents to a csv
+   embedding, embedding-doc-vec       read prompt documents and embedding
+   cleanup-missed                     delete capabilities marked as missed
+   agent, llm, chat                   test LLM agent
+   web, run                           run a web server
+   version, ver                       show build version
+   help, h                            Shows a list of commands or help for one command
 
 GLOBAL OPTIONS:
    --help, -h  show help
 
 ```
+
+Run `./morign <command> --help` for the flags of each command, e.g. `import --diff`, `export --format csv|jsonl` or `import-swagger --mark-missing`.
 
 #### Agent Command
 
@@ -220,6 +235,7 @@ Parameters:
 - `-m, --message`: message to send (required)
 - `-s, --stream`: enable streaming response
 - `-v, --verbose`: show logs (disabled by default)
+- `-i, --interactive`: interactive REPL mode
 
 
 ### Change settings with environment
@@ -248,13 +264,18 @@ HTTPS_PROXY=socks5://proxy.my-company.xyz:1081
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MORIGN_PG_STORE_DSN` | postgres://morign@localhost/morign | PostgreSQL connection string |
+| `MORIGN_PG_STORE_DSN` | postgres://morign@localhost/morign?sslmode=disable | PostgreSQL connection string |
 | `MORIGN_REDIS_URI` | redis://localhost:6379/1 | Redis connection string |
 | `MORIGN_HTTP_LISTEN` | :5001 | HTTP listen address |
 | `MORIGN_AUTH_REQUIRED` | false | Enable authentication |
 | `MORIGN_KEEPER_ROLE` | keeper | Role required for write operations |
-| `MORIGN_VECTOR_THRESHOLD` | 0.39 | Vector similarity threshold |
-| `MORIGN_VECTOR_LIMIT` | 5 | Number of vector matches |
+| `MORIGN_KEEPER_UIDS` | | Comma separated uid list that bypasses the role check |
+| `MORIGN_VECTOR_THRESHOLD` | 0.47 | Vector similarity threshold (0.39 - 0.65) |
+| `MORIGN_VECTOR_LIMIT` | 6 | Number of vector matches |
+| `MORIGN_RERANK_ENABLED` | false | Enable LLM re-rank of capability matches |
+| `MORIGN_MAX_LOOP_ITERATIONS` | 12 | Max agent tool call loop iterations |
+
+Other switches (skills injection, memory tiers, OAuth, Sentry, ...) are listed by `./morign usage`.
 
 #### Provider Configuration (AI Services)
 
@@ -298,6 +319,8 @@ MORIGN_SUMMARIZE_MODEL=gpt-4o-mini
 4. Generate Prompts and vector from QAs with Embedding
 5. Done and go to chat
 
+Step 2 can also be done over HTTP with the keeper-only import API: upload the CSV to `POST /api/corpus/imports`, then poll `GET /api/corpus/imports/{id}` until the status is `succeeded` or `failed`.
+
 ### CSV template of documents
 
 | title      | heading     | content                                   |
@@ -328,4 +351,3 @@ cd -
 ```
 
 During the development and debugging phase, you can still use with proxy to collaborate with the front-end project.
-

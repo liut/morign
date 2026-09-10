@@ -4,16 +4,19 @@ AI 聊天后端，集知识库问答、MCP 工具与 OAuth 认证于一体。
 
 ## 功能特性
 
-- 从表格（CSV）导入知识库文档，保存到 PostgreSQL
-- 基于文档标题和内容，使用 Embedding API 生成文档向量
+- 从 CSV 导入知识库文档：`import` 命令，或 keeper 专属的异步导入 API
 - 使用 Embedding API 生成文档向量
-- 基于向量搜索实现高质量问答
+- 基于向量搜索实现高质量问答，可选 LLM 重排
 - 欢迎消息和预设消息
 - 基于 Redis 的对话历史
-- RESTful API
-- 支持 text/event-stream 流式响应
+- 提供 Swagger 文档的 RESTful API，支持 text/event-stream 流式响应
 - OAuth2 客户端登录认证
 - 内置 MCP（Model Context Protocol）工具支持
+- 多频道适配器（企业微信 WebSocket/Webhook，飞书 WebSocket/Webhook）
+- 预设配置 `${VAR}` 环境变量展开
+- keeper 角色守卫写操作与管理端点
+- Skills 支持：管理 API 与按频道注入
+- 记忆分层衰减、强化与遗忘
 
 ## 支持的前端
 
@@ -27,15 +30,18 @@ AI 聊天后端，集知识库问答、MCP 工具与 OAuth 认证于一体。
 </details>
 
 <details>
- <summary>chatgpt-web 基于 Vue.js  ⤸</summary>
+ <summary>Calisyn 基于 Vue.js  ⤸</summary>
 
- ![chatgpt-web](./docs/screen-web-s.png)
+ ![calisyn](./docs/screen-web-s.png)
 
-> forked: https://github.com/liut/chatgpt-web
+> https://github.com/liut/calisyn
 
 </details>
 
 ## API 接口
+
+> 完整接口文档：[docs/swagger.yaml](./docs/swagger.yaml)，用 `make gen-apidoc` 重新生成。
+> 标记 🔑 的端点需要 keeper 角色。
 
 ### 获取会话信息
 
@@ -54,7 +60,7 @@ AI 聊天后端，集知识库问答、MCP 工具与 OAuth 认证于一体。
 
 > | http 状态码 | content-type                      | 响应                                           |
 > |---------------|-----------------------------------|---------------------------------------------------------------------|
-> | `200`         | `application/json`        | `{"status":"Success","data":{"auth":false,"user":{...}}}` (已登录)                          |
+> | `200`         | `application/json`        | `{"status":"Success","data":{"auth":false,"user":{...},"keeper":false}}` (已登录)                          |
 > | `200`         | `application/json`        | `{"status":"Success","data":{"auth":true,"uri":"/api/auth/login"}}` (未登录)                |
 
 
@@ -103,6 +109,12 @@ AI 聊天后端，集知识库问答、MCP 工具与 OAuth 认证于一体。
 
 </details>
 
+### 语料导入 🔑
+
+CSV 上传是异步的：`POST /api/corpus/imports` 接收 `multipart/form-data` 的 `file` 字段（UTF-8 CSV，表头 `title,heading,content`，最大 10 MiB），返回 `pending` 状态的任务；后台 worker 逐个处理。之后用 `GET /api/corpus/imports`（可按 `status`/`filename` 过滤，用 `limit`/`page` 分页，`sort` 排序）或 `GET /api/corpus/imports/{id}` 查询进度、计数和失败详情。CSV 原文随任务保存，读取接口不会返回。
+
+请求/响应结构和状态码见 swagger 文件。
+
 ## 快速开始
 
 ```bash
@@ -132,7 +144,16 @@ welcome: "你好，我是你的虚拟助手。有什么可以帮助你的吗？"
 systemPrompt: "你是一位有用的助手。"
 toolsPrompt: "根据用户问题选择合适的工具并调用来解决问题。"
 
-# 或配置自定义工具描述
+# 频道适配器（企业微信、飞书），密钥字段支持 ${VAR} 环境变量
+channels:
+  wecom:
+    enable: true
+    mode: websocket
+    config:
+      bot_id: "${WECOM_BOT_ID}"
+      bot_secret: "${WECOM_BOT_SECRET}"
+
+# 自定义工具描述（可选）
 tools:
   kb_search: "在知识库中搜索相关内容。当遇到未知或不确定的问题时，优先查阅知识库。"
   kb_create: "创建新的知识库文档，所有参数必填。注意：除非用户明确要求补充内容，否则不要调用。"
@@ -146,6 +167,7 @@ tools:
 - `welcome`: 显示给用户的欢迎消息
 - `systemPrompt`: AI 对话的系统提示
 - `toolsPrompt`: 工具使用说明（当 MCP 工具可用时使用）
+- `channels`: 频道适配器配置，密钥字段支持 `${VAR}` 环境变量展开
 - `tools`: 自定义工具描述（可选，覆盖内置默认值）
   注意：记忆工具 (memory_*) 与登录身份绑定并隔离。
 
@@ -171,23 +193,27 @@ CREATE EXTENSION vector;
 ```plan
 
 USAGE:
-   morign [全局选项] 命令 [命令选项] [参数...]
+   morign [全局选项] 命令 [命令选项]
 
 COMMANDS:
-   usage, env                   显示用法
-   initdb                       初始化数据库模式
-   import                       从 csv 导入文档
-   export                       导出文档到 csv/jsonl
-   embedding, embedding-prompt  读取提示文档并生成嵌入
-   agent, llm, chat            测试 LLM 功能
-   web, run                     运行 Web 服务器
-   version, ver                 显示版本
-   help, h                      显示命令帮助
+   usage, env                         显示用法
+   initdb                             初始化数据库模式
+   import                             从 csv 导入文档
+   import-swagger, import-capability  从 swagger yaml/json 导入 API 能力
+   export, exportDocs                 导出文档到 csv
+   embedding, embedding-doc-vec       读取提示文档并生成嵌入
+   cleanup-missed                     删除已标记缺失的能力
+   agent, llm, chat                   测试 LLM 功能
+   web, run                           运行 Web 服务器
+   version, ver                       显示版本
+   help, h                            显示命令帮助
 
 GLOBAL OPTIONS:
    --help, -h  显示帮助
 
 ```
+
+用 `./morign <命令> --help` 查看各命令的参数，例如 `import --diff`、`export --format csv|jsonl`、`import-swagger --mark-missing`。
 
 #### Agent 命令
 
@@ -208,6 +234,7 @@ GLOBAL OPTIONS:
 - `-m, --message`: 发送的消息 (必填)
 - `-s, --stream`: 启用流式响应
 - `-v, --verbose`: 显示日志 (默认关闭)
+- `-i, --interactive`: 交互式 REPL 模式
 
 ### 使用环境变量配置
 
@@ -235,13 +262,18 @@ HTTPS_PROXY=socks5://proxy.my-company.xyz:1081
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `MORIGN_PG_STORE_DSN` | postgres://morign@localhost/morign | PostgreSQL 连接串 |
+| `MORIGN_PG_STORE_DSN` | postgres://morign@localhost/morign?sslmode=disable | PostgreSQL 连接串 |
 | `MORIGN_REDIS_URI` | redis://localhost:6379/1 | Redis 连接串 |
 | `MORIGN_HTTP_LISTEN` | :5001 | HTTP 监听地址 |
 | `MORIGN_AUTH_REQUIRED` | false | 是否启用认证 |
 | `MORIGN_KEEPER_ROLE` | keeper | 写操作工具需要的角色 |
-| `MORIGN_VECTOR_THRESHOLD` | 0.39 | 向量相似度阈值 |
-| `MORIGN_VECTOR_LIMIT` | 5 | 向量匹配数量 |
+| `MORIGN_KEEPER_UIDS` | | 逗号分隔的 uid 列表，跳过角色检查 |
+| `MORIGN_VECTOR_THRESHOLD` | 0.47 | 向量相似度阈值（0.39 - 0.65） |
+| `MORIGN_VECTOR_LIMIT` | 6 | 向量匹配数量 |
+| `MORIGN_RERANK_ENABLED` | false | 是否启用能力匹配的 LLM 重排 |
+| `MORIGN_MAX_LOOP_ITERATIONS` | 12 | Agent 工具调用循环次数上限 |
+
+其他开关（skill 注入、记忆分层、OAuth、Sentry 等）可用 `./morign usage` 查看。
 
 #### Provider 配置（AI 服务）
 
@@ -266,8 +298,6 @@ MORIGN_INTERACT_TYPE=openai  # 可选，默认 openai
 MORIGN_INTERACT_TYPE=anthropic
 
 MORIGN_EMBEDDING_API_KEY=sk-xxx
-
-MORIGN_EMBEDDING_API_KEY=sk-xxx
 MORIGN_EMBEDDING_MODEL=text-embedding-3-small
 
 MORIGN_SUMMARIZE_API_KEY=sk-xxx
@@ -283,6 +313,8 @@ MORIGN_SUMMARIZE_MODEL=gpt-4o-mini
 3. 使用 Completion 从文档生成问答
 4. 使用 Embedding 从问答生成提示和向量
 5. 完成，开始聊天
+
+第 2 步也可以走 HTTP：把 CSV 上传到 `POST /api/corpus/imports`（仅 keeper 角色），然后轮询 `GET /api/corpus/imports/{id}`，直到状态变成 `succeeded` 或 `failed`。
 
 ### 文档 CSV 模板
 
