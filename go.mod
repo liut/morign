@@ -8,7 +8,7 @@ require (
 	github.com/PuerkitoBio/goquery v1.12.0
 	github.com/alicebob/miniredis/v2 v2.37.0
 	github.com/cespare/xxhash/v2 v2.3.0
-	github.com/cupogo/andvari v0.0.0-20260715094344-5f9c70a1e24a
+	github.com/cupogo/andvari v0.0.0-20260716112717-7cf8a185bf99
 	github.com/cupogo/querybind v0.1.0
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/go-chi/render v1.0.3
