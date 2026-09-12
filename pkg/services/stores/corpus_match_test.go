@@ -33,7 +33,7 @@ func (probeConn) Close() error                        { return nil }
 func (probeConn) Begin() (driver.Tx, error)           { return nil, errors.New("no db") }
 
 // probeQuery 只用于观察生成的 SQL，不会真正连接数据库
-func probeQuery() *bun.SelectQuery {
+func probeQuery() *ormQuery {
 	db := bun.NewDB(sql.OpenDB(probeConnector{}), pgdialect.New())
 	return db.NewSelect().Model(&corpus.Document{})
 }

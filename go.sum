@@ -29,6 +29,8 @@ github.com/cpuguy83/go-md2man/v2 v2.0.7 h1:zbFlGlXEAKlwXpmvle3d8Oe3YnkKIK4xSRTd3
 github.com/cpuguy83/go-md2man/v2 v2.0.7/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
 github.com/cupogo/andvari v0.0.0-20260715094344-5f9c70a1e24a h1:ZcSwWZDtLzWevpnIa4jtZXTvwHgZkcBHpT9hU1unQOs=
 github.com/cupogo/andvari v0.0.0-20260715094344-5f9c70a1e24a/go.mod h1:3WLKBcLtMzRpfM1DObMJpDeiu2/QBMsQxcGokkSSQ4o=
+github.com/cupogo/querybind v0.1.0 h1:jK4uXZUKVsIi8clnMPItajyiD3emKx92znLFVi+5gtc=
+github.com/cupogo/querybind v0.1.0/go.mod h1:1z1/SFzPV8YVvm5UAI3wrdKPeVWqzR+uKZWNy/yV4v0=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

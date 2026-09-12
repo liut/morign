@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/cupogo/andvari/models/oid"
+	"github.com/cupogo/querybind"
 	"github.com/go-chi/chi/v5"
 	binder "github.com/marcsv/go-binder/binder"
 
@@ -61,7 +62,7 @@ func init() {
 // @Router /api/skills [get]
 func (a *api) listSkills(w http.ResponseWriter, r *http.Request) {
 	var spec stores.SkillSpec
-	if err := queryBinder.Bind(&spec, r.URL); err != nil {
+	if err := querybind.Bind(&spec, r.URL.Query()); err != nil {
 		fail(w, r, 400, err)
 		return
 	}

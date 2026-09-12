@@ -5,6 +5,7 @@ package api
 import (
 	"net/http"
 
+	querybind "github.com/cupogo/querybind"
 	"github.com/go-chi/chi/v5"
 	"github.com/liut/morign/pkg/models/convo"
 	"github.com/liut/morign/pkg/services/stores"
@@ -63,7 +64,7 @@ func init() {
 // @Router /api/convo/sessions [get]
 func (a *api) getConvoSessions(w http.ResponseWriter, r *http.Request) {
 	var spec stores.ConvoSessionSpec
-	if err := queryBinder.Bind(&spec, r.URL); err != nil {
+	if err := querybind.Bind(&spec, r.URL.Query()); err != nil {
 		fail(w, r, 400, err)
 		return
 	}
@@ -75,7 +76,7 @@ func (a *api) getConvoSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if total == 0 {
+	if spec.GetLimit() == 0 && spec.GetPage() == 0 && total == 0 {
 		total = len(data)
 	}
 	success(w, r, dtResult(data, total))
@@ -144,7 +145,7 @@ func (a *api) deleteConvoSession(w http.ResponseWriter, r *http.Request) {
 // @Router /api/convo/messages [get]
 func (a *api) getConvoMessages(w http.ResponseWriter, r *http.Request) {
 	var spec stores.ConvoMessageSpec
-	if err := queryBinder.Bind(&spec, r.URL); err != nil {
+	if err := querybind.Bind(&spec, r.URL.Query()); err != nil {
 		fail(w, r, 400, err)
 		return
 	}
@@ -156,7 +157,7 @@ func (a *api) getConvoMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if total == 0 {
+	if spec.GetLimit() == 0 && spec.GetPage() == 0 && total == 0 {
 		total = len(data)
 	}
 	success(w, r, dtResult(data, total))
@@ -226,7 +227,7 @@ func (a *api) deleteConvoMessage(w http.ResponseWriter, r *http.Request) {
 // @Router /api/convo/users [get]
 func (a *api) getConvoUsers(w http.ResponseWriter, r *http.Request) {
 	var spec stores.ConvoUserSpec
-	if err := queryBinder.Bind(&spec, r.URL); err != nil {
+	if err := querybind.Bind(&spec, r.URL.Query()); err != nil {
 		fail(w, r, 400, err)
 		return
 	}
@@ -238,7 +239,7 @@ func (a *api) getConvoUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if total == 0 {
+	if spec.GetLimit() == 0 && spec.GetPage() == 0 && total == 0 {
 		total = len(data)
 	}
 	success(w, r, dtResult(data, total))
@@ -307,7 +308,7 @@ func (a *api) deleteConvoUser(w http.ResponseWriter, r *http.Request) {
 // @Router /api/convo/usagerecords [get]
 func (a *api) getConvoUsageRecords(w http.ResponseWriter, r *http.Request) {
 	var spec stores.ConvoUsageRecordSpec
-	if err := queryBinder.Bind(&spec, r.URL); err != nil {
+	if err := querybind.Bind(&spec, r.URL.Query()); err != nil {
 		fail(w, r, 400, err)
 		return
 	}
@@ -319,7 +320,7 @@ func (a *api) getConvoUsageRecords(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if total == 0 {
+	if spec.GetLimit() == 0 && spec.GetPage() == 0 && total == 0 {
 		total = len(data)
 	}
 	success(w, r, dtResult(data, total))

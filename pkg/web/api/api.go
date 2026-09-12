@@ -54,7 +54,6 @@ type api struct {
 }
 
 func init() {
-	queryBinder.SetTag("form")
 	routes.Register("api", routes.StrapFunc(strap))
 }
 

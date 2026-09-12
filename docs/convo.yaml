@@ -283,7 +283,6 @@ stores:
 
 webcode: chi
 webapi:
-  formTag: form
   pkg: api
   needAuth: true
   uris:

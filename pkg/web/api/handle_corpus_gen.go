@@ -5,6 +5,7 @@ package api
 import (
 	"net/http"
 
+	querybind "github.com/cupogo/querybind"
 	"github.com/go-chi/chi/v5"
 	"github.com/liut/morign/pkg/models/corpus"
 	"github.com/liut/morign/pkg/services/stores"
@@ -41,7 +42,7 @@ func init() {
 // @Router /api/corpus/documents [get]
 func (a *api) getCorpusDocuments(w http.ResponseWriter, r *http.Request) {
 	var spec stores.CobDocumentSpec
-	if err := queryBinder.Bind(&spec, r.URL); err != nil {
+	if err := querybind.Bind(&spec, r.URL.Query()); err != nil {
 		fail(w, r, 400, err)
 		return
 	}
@@ -53,7 +54,7 @@ func (a *api) getCorpusDocuments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if total == 0 {
+	if spec.GetLimit() == 0 && spec.GetPage() == 0 && total == 0 {
 		total = len(data)
 	}
 	success(w, r, dtResult(data, total))
