@@ -25,7 +25,7 @@ func init() {
 	regHI(true, "GET", "/corpus/imports", "corpus-imports-get", func(a *api) http.HandlerFunc {
 		return a.getCorpusImports
 	})
-	regHI(true, "GET", "/corpus/imports/:id", "corpus-imports-id-get", func(a *api) http.HandlerFunc {
+	regHI(true, "GET", "/corpus/imports/{id}", "corpus-imports-id-get", func(a *api) http.HandlerFunc {
 		return a.getCorpusImport
 	})
 }

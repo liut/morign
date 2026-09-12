@@ -15,13 +15,13 @@ func init() {
 	regHI(true, "GET", "/corpus/documents", "", func(a *api) http.HandlerFunc {
 		return a.getCorpusDocuments
 	})
-	regHI(true, "GET", "/corpus/documents/:id", "", func(a *api) http.HandlerFunc {
+	regHI(true, "GET", "/corpus/documents/{id}", "", func(a *api) http.HandlerFunc {
 		return a.getCorpusDocument
 	})
-	regHI(true, "PUT", "/corpus/documents/:id", "corpus-documents-id-put", func(a *api) http.HandlerFunc {
+	regHI(true, "PUT", "/corpus/documents/{id}", "corpus-documents-id-put", func(a *api) http.HandlerFunc {
 		return a.putCorpusDocument
 	})
-	regHI(true, "DELETE", "/corpus/documents/:id", "corpus-documents-id-delete", func(a *api) http.HandlerFunc {
+	regHI(true, "DELETE", "/corpus/documents/{id}", "corpus-documents-id-delete", func(a *api) http.HandlerFunc {
 		return a.deleteCorpusDocument
 	})
 }
@@ -53,6 +53,9 @@ func (a *api) getCorpusDocuments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if total == 0 {
+		total = len(data)
+	}
 	success(w, r, dtResult(data, total))
 }
 

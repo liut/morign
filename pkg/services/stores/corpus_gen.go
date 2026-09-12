@@ -52,17 +52,13 @@ type CobDocumentSpec struct {
 
 	// 主标题 名称
 	Title string `extensions:"x-order=A" form:"title" json:"title"`
-	// 小节标题 属性 类别
-	Heading string `extensions:"x-order=B" form:"heading" json:"heading"`
-	// 内容 值
-	Content string `extensions:"x-order=C" form:"content" json:"content"`
+	// 内容搜索关键词（走向量匹配，不做 like）
+	Match string `extensions:"x-order=B" form:"match" json:"match,omitempty"`
 }
 
 func (spec *CobDocumentSpec) Sift(q *ormQuery) *ormQuery {
 	q = spec.ModelSpec.Sift(q)
 	q, _ = siftMatch(q, "title", spec.Title, false)
-	q, _ = siftMatch(q, "heading", spec.Heading, false)
-	q, _ = siftMatch(q, "content", spec.Content, false)
 
 	return q
 }
@@ -156,6 +152,9 @@ func (s *corpuStore) UpdateDocument(ctx context.Context, id string, in corpus.Do
 func (s *corpuStore) DeleteDocument(ctx context.Context, id string) error {
 	obj := new(corpus.Document)
 	if err := dbGetWithPKID(ctx, s.w.db, obj, id); err != nil {
+		if errorIs(err, ErrNotFound) {
+			return nil
+		}
 		return err
 	}
 	return s.w.db.RunInTx(ctx, nil, func(ctx context.Context, tx pgTx) (err error) {

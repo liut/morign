@@ -43,15 +43,22 @@ models:
         type: string
         tags: {json: 'heading', pg: ',notnull,type:text,unique:corpus_title_heading_key'}
         isset: true
-        query: 'match'
         sortable: true
       - comment: 内容 值
         name: Content
         type: string
         tags: {json: 'content', pg: ',notnull,type:text'}
         isset: true
-        query: 'match'
+      - comment: 相似度 仅用于查询结果
+        name: Similarity
+        type: float32
+        tags: {json: 'similarity,omitempty', pg: '-'}
       - type: comm.MetaField
+    specExtras:
+      - comment: 内容搜索关键词（走向量匹配，不做 like）
+        name: Match
+        type: string
+        tags: {json: 'match,omitempty', form: 'match'}
     oidcat: article
     hooks:
       # beforeSaving: yes
@@ -229,7 +236,6 @@ stores:
 
 webcode: chi
 webapi:
-  formTag: form
   pkg: api
   needAuth: true
   uris:

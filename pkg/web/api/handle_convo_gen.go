@@ -14,37 +14,37 @@ func init() {
 	regHI(true, "GET", "/convo/sessions", "", func(a *api) http.HandlerFunc {
 		return a.getConvoSessions
 	})
-	regHI(true, "GET", "/convo/sessions/:id", "", func(a *api) http.HandlerFunc {
+	regHI(true, "GET", "/convo/sessions/{id}", "", func(a *api) http.HandlerFunc {
 		return a.getConvoSession
 	})
-	regHI(true, "DELETE", "/convo/sessions/:id", "convo-sessions-id-delete", func(a *api) http.HandlerFunc {
+	regHI(true, "DELETE", "/convo/sessions/{id}", "convo-sessions-id-delete", func(a *api) http.HandlerFunc {
 		return a.deleteConvoSession
 	})
 	regHI(true, "GET", "/convo/messages", "", func(a *api) http.HandlerFunc {
 		return a.getConvoMessages
 	})
-	regHI(true, "GET", "/convo/messages/:id", "", func(a *api) http.HandlerFunc {
+	regHI(true, "GET", "/convo/messages/{id}", "", func(a *api) http.HandlerFunc {
 		return a.getConvoMessage
 	})
-	regHI(true, "DELETE", "/convo/messages/:id", "convo-messages-id-delete", func(a *api) http.HandlerFunc {
+	regHI(true, "DELETE", "/convo/messages/{id}", "convo-messages-id-delete", func(a *api) http.HandlerFunc {
 		return a.deleteConvoMessage
 	})
 	regHI(true, "GET", "/convo/users", "", func(a *api) http.HandlerFunc {
 		return a.getConvoUsers
 	})
-	regHI(true, "GET", "/convo/users/:id", "", func(a *api) http.HandlerFunc {
+	regHI(true, "GET", "/convo/users/{id}", "", func(a *api) http.HandlerFunc {
 		return a.getConvoUser
 	})
-	regHI(true, "DELETE", "/convo/users/:id", "convo-users-id-delete", func(a *api) http.HandlerFunc {
+	regHI(true, "DELETE", "/convo/users/{id}", "convo-users-id-delete", func(a *api) http.HandlerFunc {
 		return a.deleteConvoUser
 	})
 	regHI(true, "GET", "/convo/usagerecords", "", func(a *api) http.HandlerFunc {
 		return a.getConvoUsageRecords
 	})
-	regHI(true, "GET", "/convo/usagerecords/:id", "", func(a *api) http.HandlerFunc {
+	regHI(true, "GET", "/convo/usagerecords/{id}", "", func(a *api) http.HandlerFunc {
 		return a.getConvoUsageRecord
 	})
-	regHI(true, "DELETE", "/convo/usagerecords/:id", "convo-usagerecords-id-delete", func(a *api) http.HandlerFunc {
+	regHI(true, "DELETE", "/convo/usagerecords/{id}", "convo-usagerecords-id-delete", func(a *api) http.HandlerFunc {
 		return a.deleteConvoUsageRecord
 	})
 }
@@ -75,6 +75,9 @@ func (a *api) getConvoSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if total == 0 {
+		total = len(data)
+	}
 	success(w, r, dtResult(data, total))
 }
 
@@ -153,6 +156,9 @@ func (a *api) getConvoMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if total == 0 {
+		total = len(data)
+	}
 	success(w, r, dtResult(data, total))
 }
 
@@ -232,6 +238,9 @@ func (a *api) getConvoUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if total == 0 {
+		total = len(data)
+	}
 	success(w, r, dtResult(data, total))
 }
 
@@ -310,6 +319,9 @@ func (a *api) getConvoUsageRecords(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if total == 0 {
+		total = len(data)
+	}
 	success(w, r, dtResult(data, total))
 }
 

@@ -33,16 +33,16 @@ func init() {
 	regHI(true, "GET", "/skills", "", func(a *api) http.HandlerFunc {
 		return a.listSkills
 	})
-	regHI(true, "GET", "/skills/:name", "", func(a *api) http.HandlerFunc {
+	regHI(true, "GET", "/skills/{name}", "", func(a *api) http.HandlerFunc {
 		return a.getSkillByName
 	})
 	regHI(true, "POST", "/skills", "", func(a *api) http.HandlerFunc {
 		return a.createSkill
 	})
-	regHI(true, "PUT", "/skills/:name", "", func(a *api) http.HandlerFunc {
+	regHI(true, "PUT", "/skills/{name}", "", func(a *api) http.HandlerFunc {
 		return a.updateSkill
 	})
-	regHI(true, "DELETE", "/skills/:name", "", func(a *api) http.HandlerFunc {
+	regHI(true, "DELETE", "/skills/{name}", "", func(a *api) http.HandlerFunc {
 		return a.deleteSkillByName
 	})
 }

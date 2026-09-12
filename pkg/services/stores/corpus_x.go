@@ -8,7 +8,9 @@ import (
 	"io"
 	"strings"
 	"time"
+	"unicode/utf8"
 
+	"github.com/cupogo/andvari/models/oid"
 	"github.com/pmezard/go-difflib/difflib"
 	"github.com/spf13/cast"
 
@@ -172,7 +174,7 @@ func (s *corpuStore) ProcessImportTask(ctx context.Context, task *corpus.ImportT
 
 	var (
 		total, success, failed, skipped int
-		errs                             []corpus.ImportFailure
+		errs                            []corpus.ImportFailure
 	)
 	for {
 		row, err := rd.Read()
@@ -393,16 +395,9 @@ func (s *corpuStore) MatchDocments(ctx context.Context, ms MatchSpec) (data corp
 		logger().Infow("empty subject", "spec", ms)
 		return
 	}
-	var vec corpus.Vector
-	vec, err = GetEmbedding(ctx, subject)
-	if err != nil {
-		logger().Infow("GetEmbedding fail", "err", err)
-		return
-	}
-	var ps corpus.DocMatches
-	ps, err = s.MatchVectorWith(ctx, vec, ms.Threshold, ms.Limit)
+	ps, err := matchVectors(ctx, s, subject, ms.Threshold, ms.Limit)
 	if err != nil || len(ps) == 0 {
-		logger().Infow("no match docs", "subj", subject)
+		logger().Infow("no match docs", "subj", subject, "err", err)
 		return
 	}
 	logger().Infow("matched", "docs", ps.Subjects(30), "err", err)
@@ -415,6 +410,69 @@ func (s *corpuStore) MatchDocments(ctx context.Context, ms MatchSpec) (data corp
 		logger().Infow("list docs", "ids", spec.IDs, "matches", data.Headings())
 	}
 	return
+}
+
+const (
+	// defaultMatchCandidates 列表语义搜索的向量候选数量
+	defaultMatchCandidates = 50
+	// minMatchRunes 去除空格后的搜索词最少字符数
+	minMatchRunes = 2
+)
+
+// SiftX 处理需要上下文或外部服务的查询条件：spec.Match 走向量匹配
+func (spec *CobDocumentSpec) SiftX(ctx context.Context, q *ormQuery) *ormQuery {
+	if len(spec.Match) == 0 {
+		return q
+	}
+	keyword, ok := matchKeyword(spec.Match)
+	if !ok {
+		logger().Infow("match too short", "match", spec.Match)
+		return q.Where("FALSE")
+	}
+	ps, err := matchVectors(ctx, Sgt().Corpus(), keyword, settings.Current.VectorThreshold, spec.matchCandidates())
+	if err != nil {
+		logger().Infow("match fail", "match", keyword, "err", err)
+		return q.Err(err)
+	}
+	return siftMatchIDs(q, ps.DocumentIDs())
+}
+
+// vectorMatcher 向量匹配所需的最小接口
+type vectorMatcher interface {
+	MatchVectorWith(ctx context.Context, vec corpus.Vector, threshold float32, limit int) (data corpus.DocMatches, err error)
+}
+
+// matchVectors 由查询词得到向量匹配结果
+func matchVectors(ctx context.Context, m vectorMatcher, query string, threshold float32, limit int) (corpus.DocMatches, error) {
+	vec, err := GetEmbedding(ctx, query)
+	if err != nil {
+		logger().Infow("GetEmbedding fail", "query", query, "err", err)
+		return nil, err
+	}
+	return m.MatchVectorWith(ctx, vec, threshold, limit)
+}
+
+// matchKeyword 返回去除空格后的搜索词，不足 minMatchRunes 时返回 false
+func matchKeyword(match string) (string, bool) {
+	keyword := strings.Join(strings.Fields(match), "")
+	return keyword, utf8.RuneCountInString(keyword) >= minMatchRunes
+}
+
+// siftMatchIDs 按命中的文档编号过滤
+func siftMatchIDs(q *ormQuery, ids oid.OIDs) *ormQuery {
+	if len(ids) == 0 {
+		return q.Where("FALSE")
+	}
+	q, _ = sift(q, "id", "in", ids, false)
+	return q
+}
+
+// matchCandidates 向量候选数量：覆盖当前页所需，至少 defaultMatchCandidates
+func (spec *CobDocumentSpec) matchCandidates() int {
+	if n := spec.GetLimit() + spec.GetSkip(); n > defaultMatchCandidates {
+		return n
+	}
+	return defaultMatchCandidates
 }
 
 // MatchVectorWith matches documents using vector

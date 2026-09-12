@@ -2,6 +2,7 @@ package stores
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -33,6 +34,7 @@ type StringsDiff = pgx.StringsDiff
 var (
 	pgList = pgx.List
 
+	errorIs      = errors.Is
 	ErrNoRows    = pgx.ErrNoRows
 	ErrNotFound  = pgx.ErrNotFound
 	ErrEmptyKey  = pgx.ErrEmptyKey

@@ -11,7 +11,6 @@ import (
 	"github.com/ulule/limiter/v3"
 	"github.com/ulule/limiter/v3/drivers/middleware/stdlib"
 	limitRedis "github.com/ulule/limiter/v3/drivers/store/redis"
-	urlquerybinder "github.com/wgarunap/url-query-binder"
 
 	staffio "github.com/liut/staffio-client"
 
@@ -28,8 +27,6 @@ import (
 )
 
 var handles = []handleIn{}
-
-var queryBinder = urlquerybinder.NewQueryBinder()
 
 type haFunc func(a *api) http.HandlerFunc
 

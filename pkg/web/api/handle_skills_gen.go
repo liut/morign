@@ -15,16 +15,16 @@ func init() {
 	regHI(true, "GET", "/admin/skills", "admin-skills-get", func(a *api) http.HandlerFunc {
 		return a.getSkills
 	})
-	regHI(true, "GET", "/admin/skills/:id", "admin-skills-id-get", func(a *api) http.HandlerFunc {
+	regHI(true, "GET", "/admin/skills/{id}", "admin-skills-id-get", func(a *api) http.HandlerFunc {
 		return a.getSkill
 	})
 	regHI(true, "POST", "/admin/skills", "admin-skills-post", func(a *api) http.HandlerFunc {
 		return a.postSkill
 	})
-	regHI(true, "PUT", "/admin/skills/:id", "admin-skills-id-put", func(a *api) http.HandlerFunc {
+	regHI(true, "PUT", "/admin/skills/{id}", "admin-skills-id-put", func(a *api) http.HandlerFunc {
 		return a.putSkill
 	})
-	regHI(true, "DELETE", "/admin/skills/:id", "admin-skills-id-delete", func(a *api) http.HandlerFunc {
+	regHI(true, "DELETE", "/admin/skills/{id}", "admin-skills-id-delete", func(a *api) http.HandlerFunc {
 		return a.deleteSkill
 	})
 }
@@ -56,6 +56,9 @@ func (a *api) getSkills(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if total == 0 {
+		total = len(data)
+	}
 	success(w, r, dtResult(data, total))
 }
 

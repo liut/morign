@@ -15,16 +15,16 @@ func init() {
 	regHI(true, "GET", "/mcp/servers", "mcp-servers-get", func(a *api) http.HandlerFunc {
 		return a.getMCPServers
 	})
-	regHI(true, "GET", "/mcp/servers/:id", "mcp-servers-id-get", func(a *api) http.HandlerFunc {
+	regHI(true, "GET", "/mcp/servers/{id}", "mcp-servers-id-get", func(a *api) http.HandlerFunc {
 		return a.getMCPServer
 	})
 	regHI(true, "POST", "/mcp/servers", "mcp-servers-post", func(a *api) http.HandlerFunc {
 		return a.postMCPServer
 	})
-	regHI(true, "PUT", "/mcp/servers/:id", "mcp-servers-id-put", func(a *api) http.HandlerFunc {
+	regHI(true, "PUT", "/mcp/servers/{id}", "mcp-servers-id-put", func(a *api) http.HandlerFunc {
 		return a.putMCPServer
 	})
-	regHI(true, "DELETE", "/mcp/servers/:id", "mcp-servers-id-delete", func(a *api) http.HandlerFunc {
+	regHI(true, "DELETE", "/mcp/servers/{id}", "mcp-servers-id-delete", func(a *api) http.HandlerFunc {
 		return a.deleteMCPServer
 	})
 }
@@ -56,6 +56,9 @@ func (a *api) getMCPServers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if total == 0 {
+		total = len(data)
+	}
 	success(w, r, dtResult(data, total))
 }
 

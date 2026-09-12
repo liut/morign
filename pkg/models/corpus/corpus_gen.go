@@ -72,6 +72,9 @@ type Document struct {
 
 	DocumentBasic
 
+	// 相似度 仅用于查询结果
+	Similarity float32 `bun:"-" extensions:"x-order=D" json:"similarity,omitempty" pg:"-"`
+
 	comm.MetaField
 } // @name corpusDocument
 

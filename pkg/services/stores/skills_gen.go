@@ -121,6 +121,9 @@ func (s *skillStore) UpdateSkill(ctx context.Context, id string, in skills.Skill
 func (s *skillStore) DeleteSkill(ctx context.Context, id string) error {
 	obj := new(skills.Skill)
 	if err := dbGetWithPKID(ctx, s.w.db, obj, id); err != nil {
+		if errorIs(err, ErrNotFound) {
+			return nil
+		}
 		return err
 	}
 	return s.w.db.RunInTx(ctx, nil, func(ctx context.Context, tx pgTx) (err error) {

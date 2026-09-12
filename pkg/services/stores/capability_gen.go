@@ -112,6 +112,9 @@ func (s *capabilityStore) UpdateCapability(ctx context.Context, id string, in ca
 func (s *capabilityStore) DeleteCapability(ctx context.Context, id string) error {
 	obj := new(capability.Capability)
 	if err := dbGetWithPKID(ctx, s.w.db, obj, id); err != nil {
+		if errorIs(err, ErrNotFound) {
+			return nil
+		}
 		return err
 	}
 	return s.w.db.RunInTx(ctx, nil, func(ctx context.Context, tx pgTx) (err error) {

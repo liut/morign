@@ -1912,15 +1912,8 @@
                     {
                         "type": "string",
                         "x-order": "B",
-                        "description": "小节标题 属性 类别",
-                        "name": "heading",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "x-order": "C",
-                        "description": "内容 值",
-                        "name": "content",
+                        "description": "内容搜索关键词（走向量匹配，不做 like）",
+                        "name": "match",
                         "in": "query"
                     },
                     {
