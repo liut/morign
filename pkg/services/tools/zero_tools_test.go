@@ -2,11 +2,16 @@ package tools
 
 import (
 	"context"
+	"errors"
+	"net/http/httptest"
+	"slices"
 	"testing"
 
 	mcp "github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/liut/morign/pkg/models/mcps"
+	"github.com/liut/morign/pkg/services/stores"
 )
 
 // --- genToolKey ---
@@ -482,6 +487,148 @@ func TestRemoveServerNotFound(t *testing.T) {
 	err := r.RemoveServer("nonexistent")
 	if err == nil {
 		t.Error("should return error for unknown server")
+	}
+}
+
+// --- LoadServers ---
+
+// fakeMCPStore 遵守分页语义：limit > 0 时按 limit 截断，limit < 0 时只计数不返回行，零值 limit 时全量返回
+type fakeMCPStore struct {
+	rows     mcps.Servers
+	lastSpec *stores.MCPServerSpec
+}
+
+func (f *fakeMCPStore) ListServer(ctx context.Context, spec *stores.MCPServerSpec) (mcps.Servers, int, error) {
+	f.lastSpec = spec
+	rows := f.rows
+	switch {
+	case spec.Limit < 0:
+		rows = nil
+	case spec.Limit > 0 && spec.Limit < len(rows):
+		rows = rows[:spec.Limit]
+	}
+	return rows, len(rows), nil
+}
+
+func (f *fakeMCPStore) GetServer(ctx context.Context, id string) (*mcps.Server, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (f *fakeMCPStore) CreateServer(ctx context.Context, in mcps.ServerBasic) (*mcps.Server, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (f *fakeMCPStore) UpdateServer(ctx context.Context, id string, in mcps.ServerSet) error {
+	return errors.New("not implemented")
+}
+
+func (f *fakeMCPStore) DeleteServer(ctx context.Context, id string) error {
+	return errors.New("not implemented")
+}
+
+// startMCPTestServer 启动一个只有单个工具的 streamable HTTP MCP Server，返回其 URL
+func startMCPTestServer(t *testing.T, toolName string) string {
+	t.Helper()
+	s := server.NewMCPServer("test-server", "1.0.0", server.WithToolCapabilities(false))
+	s.AddTool(mcp.NewTool(toolName, mcp.WithDescription("test tool")),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("ok"), nil
+		})
+	hs := httptest.NewServer(server.NewStreamableHTTPServer(s))
+	t.Cleanup(hs.Close)
+	return hs.URL + "/mcp"
+}
+
+func remoteServer(name, url string) mcps.Server {
+	return mcps.Server{ServerBasic: mcps.ServerBasic{
+		Name:      name,
+		TransType: mcps.TransTypeStreamable,
+		URL:       url,
+		IsActive:  true,
+	}}
+}
+
+func registeredServerCount(r *Registry) int {
+	r.serversMu.RLock()
+	defer r.serversMu.RUnlock()
+	return len(r.servers)
+}
+
+func TestLoadServersLoadsAllActive(t *testing.T) {
+	// 3 个活跃 server + 遵守分页语义的假 store：重加数量上限会让用例失败
+	sto := &fakeMCPStore{rows: mcps.Servers{
+		remoteServer("srv-a", startMCPTestServer(t, "ping_a")),
+		remoteServer("srv-b", startMCPTestServer(t, "ping_b")),
+		remoteServer("srv-c", startMCPTestServer(t, "ping_c")),
+	}}
+	r := NewRegistry(nil, WithClientInfo("morign-test", "1.0"))
+
+	if err := r.loadServers(context.Background(), sto); err != nil {
+		t.Fatalf("loadServers: %v", err)
+	}
+	// 钉住筛选条件本身：任何非零 Limit/Page 都会改变上游分页语义
+	if spec := sto.lastSpec; spec == nil || spec.Limit != 0 || spec.Page != 0 || spec.IsActive != "true" {
+		t.Errorf("load spec = %+v, want IsActive=true with zero Limit/Page", spec)
+	}
+	if got := registeredServerCount(r); got != 3 {
+		t.Fatalf("loaded %d servers, want 3", got)
+	}
+
+	var names []string
+	for _, td := range r.ToolsFor(context.Background()) {
+		names = append(names, td.Name)
+	}
+	for _, want := range []string{"srv-a__ping_a", "srv-b__ping_b", "srv-c__ping_c"} {
+		if !slices.Contains(names, want) {
+			t.Errorf("tool %q not registered, got %v", want, names)
+		}
+	}
+}
+
+func TestLoadServersEmpty(t *testing.T) {
+	r := NewRegistry(nil)
+	if err := r.loadServers(context.Background(), &fakeMCPStore{}); err != nil {
+		t.Fatalf("loadServers: %v", err)
+	}
+	if got := registeredServerCount(r); got != 0 {
+		t.Errorf("loaded %d servers, want 0", got)
+	}
+}
+
+func TestLoadServersSkipsNonRemote(t *testing.T) {
+	rows := mcps.Servers{
+		{ServerBasic: mcps.ServerBasic{Name: "stdio", TransType: mcps.TransTypeStdIO, IsActive: true}},
+		{ServerBasic: mcps.ServerBasic{Name: "memory", TransType: mcps.TransTypeInMemory, IsActive: true}},
+	}
+	r := NewRegistry(nil)
+	if err := r.loadServers(context.Background(), &fakeMCPStore{rows: rows}); err != nil {
+		t.Fatalf("loadServers: %v", err)
+	}
+	if got := registeredServerCount(r); got != 0 {
+		t.Errorf("loaded %d servers, want 0", got)
+	}
+}
+
+func TestLoadServersContinuesAfterFailure(t *testing.T) {
+	sto := &fakeMCPStore{rows: mcps.Servers{
+		remoteServer("srv-a", startMCPTestServer(t, "ping_a")),
+		remoteServer("srv-bad", "http://127.0.0.1:1/mcp"),
+		remoteServer("srv-c", startMCPTestServer(t, "ping_c")),
+	}}
+	r := NewRegistry(nil)
+
+	if err := r.loadServers(context.Background(), sto); err != nil {
+		t.Fatalf("loadServers: %v", err)
+	}
+	if got := registeredServerCount(r); got != 2 {
+		t.Fatalf("loaded %d servers, want 2", got)
+	}
+}
+
+func TestLoadServersNilStorage(t *testing.T) {
+	r := NewRegistry(nil)
+	if err := r.LoadServers(context.Background(), nil); err != nil {
+		t.Fatalf("LoadServers(nil): %v", err)
 	}
 }
 

@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/liut/morign/pkg/services/llm"
 	"github.com/liut/morign/pkg/services/tools"
+	"github.com/liut/morign/pkg/settings"
 )
 
 func testRegistry() *tools.Registry {
@@ -262,6 +265,7 @@ func TestExecuteToolCallsNonFunctionType(t *testing.T) {
 		t.Errorf("expected 0 events, got %d", len(evs))
 	}
 }
+
 // moved from pkg/web/api/handle_convo_test.go
 func TestFormatToolResult(t *testing.T) {
 	tests := []struct {
@@ -296,5 +300,119 @@ func TestFormatToolResult(t *testing.T) {
 				t.Errorf("formatToolResult() = %v, want %v", result, tt.expected)
 			}
 		})
+	}
+}
+
+// setToolResultMaxChars 覆盖配置上限，测试结束恢复
+func setToolResultMaxChars(t *testing.T, n int) {
+	t.Helper()
+	orig := settings.Current.ToolResultMaxChars
+	settings.Current.ToolResultMaxChars = n
+	t.Cleanup(func() { settings.Current.ToolResultMaxChars = orig })
+}
+
+func textToolResult(text string) map[string]any {
+	return map[string]any{"content": []any{map[string]any{"text": text}}}
+}
+
+func TestFormatToolResultTruncation(t *testing.T) {
+	const notice = "[truncated: showing the first 5 of 8 characters"
+
+	t.Run("within limit kept byte-identical", func(t *testing.T) {
+		setToolResultMaxChars(t, 100)
+		text := "短结果，原样返回"
+		if got := formatToolResult(textToolResult(text)); got != text {
+			t.Errorf("got %q, want %q", got, text)
+		}
+	})
+
+	t.Run("exactly at limit kept", func(t *testing.T) {
+		setToolResultMaxChars(t, 5)
+		text := "12345"
+		if got := formatToolResult(textToolResult(text)); got != text {
+			t.Errorf("got %q, want %q", got, text)
+		}
+	})
+
+	t.Run("cjk truncated on rune boundary", func(t *testing.T) {
+		setToolResultMaxChars(t, 5)
+		got := formatToolResult(textToolResult("中文测试内容超出"))
+		if !strings.HasPrefix(got, "中文测试内") {
+			t.Errorf("head = %q, want prefix 中文测试内", got)
+		}
+		if !strings.Contains(got, notice) {
+			t.Errorf("missing truncation notice: %q", got)
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("result is not valid utf-8: %q", got)
+		}
+		if r := []rune(got); r[5] == utf8.RuneError {
+			t.Errorf("truncated at a broken rune boundary: %q", got)
+		}
+	})
+
+	t.Run("zero limit keeps long content", func(t *testing.T) {
+		setToolResultMaxChars(t, 0)
+		text := strings.Repeat("字", 100)
+		if got := formatToolResult(textToolResult(text)); got != text {
+			t.Errorf("len(got) = %d, want %d", len(got), len(text))
+		}
+	})
+
+	t.Run("nil and empty results", func(t *testing.T) {
+		setToolResultMaxChars(t, 5)
+		if got := formatToolResult(nil); got != "" {
+			t.Errorf("nil = %q, want empty", got)
+		}
+		if got := formatToolResult(map[string]any{}); got != "{}" {
+			t.Errorf("empty map = %q, want {}", got)
+		}
+	})
+
+	t.Run("structuredContent capped", func(t *testing.T) {
+		setToolResultMaxChars(t, 5)
+		got := formatToolResult(map[string]any{"structuredContent": "中文测试内容超出"})
+		if !strings.HasPrefix(got, "中文测试内") || !strings.Contains(got, notice) {
+			t.Errorf("structuredContent not capped: %q", got)
+		}
+	})
+
+	t.Run("json fallback capped", func(t *testing.T) {
+		setToolResultMaxChars(t, 5)
+		got := formatToolResult(map[string]any{"blob": strings.Repeat("x", 50)})
+		if !strings.HasPrefix(got, `{"blo`) || !strings.Contains(got, "of ") {
+			t.Errorf("json fallback not capped: %q", got)
+		}
+	})
+}
+
+func TestExecuteToolCallsTruncatesToolResult(t *testing.T) {
+	setToolResultMaxChars(t, 20)
+	reg := testRegistry()
+	reg.RegisterInvoker("big", func(ctx context.Context, params map[string]any) (map[string]any, error) {
+		result := textToolResult(strings.Repeat("字", 100))
+		result["terminate"] = true
+		return result, nil
+	})
+
+	te := NewToolExecutor(reg)
+	evs, msgs, allTerm := te.ExecuteToolCalls(context.Background(), nil,
+		[]llm.ToolCall{tc("c1", "big", nil)}, "")
+
+	if len(evs) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(evs))
+	}
+	if !strings.Contains(evs[0].ToolResult.Content, "showing the first 20 of 100 characters") {
+		t.Errorf("event content not truncated: %q", evs[0].ToolResult.Content)
+	}
+	if !allTerm || !evs[0].ToolResult.Terminate {
+		t.Error("terminate semantics should be preserved")
+	}
+	toolMsg := msgs[len(msgs)-1]
+	if toolMsg.Role != llm.RoleTool {
+		t.Fatalf("last message role = %q, want tool", toolMsg.Role)
+	}
+	if !strings.Contains(toolMsg.Content, "[truncated:") {
+		t.Errorf("tool message not truncated: %q", toolMsg.Content)
 	}
 }

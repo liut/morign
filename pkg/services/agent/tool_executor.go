@@ -3,12 +3,16 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/liut/morign/pkg/services/llm"
 	"github.com/liut/morign/pkg/services/tools"
+	"github.com/liut/morign/pkg/settings"
+	"github.com/liut/morign/pkg/utils/words"
 )
 
 // ChatExecutor 定义聊天执行函数类型，支持流式/非流式
@@ -191,9 +195,13 @@ func (e *ToolExecutor) ExecuteToolCalls(ctx context.Context, messages []llm.Mess
 	return events, messages, allTerminate
 }
 
-// formatToolResult 将工具结果转换为文本字符串
-// 优先提取 content 数组中的 text，否则使用 structuredContent
+// formatToolResult 将工具结果转换为文本字符串，并按配置上限截断
 func formatToolResult(result map[string]any) string {
+	return truncateToolResult(toolResultText(result))
+}
+
+// toolResultText 优先提取 content 数组中的 text，否则使用 structuredContent，最后序列化为 JSON
+func toolResultText(result map[string]any) string {
 	if result == nil {
 		return ""
 	}
@@ -226,4 +234,19 @@ func formatToolResult(result map[string]any) string {
 		return string(b)
 	}
 	return ""
+}
+
+// truncateToolResult 按 rune 截断超长结果并附截断说明；上限为 0 或未超限时原样返回
+func truncateToolResult(text string) string {
+	limit := settings.Current.ToolResultMaxChars
+	if limit <= 0 {
+		return text
+	}
+	size := utf8.RuneCountInString(text)
+	if size <= limit {
+		return text
+	}
+	return fmt.Sprintf(
+		"%s\n[truncated: showing the first %d of %d characters; narrow the query or page through the source to get the rest]",
+		words.TakeHead(text, limit), limit, size)
 }

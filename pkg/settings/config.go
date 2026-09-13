@@ -70,6 +70,9 @@ type Config struct {
 	// LLM调用循环次数限制，防止无限循环
 	MaxLoopIterations int `envconfig:"MAX_LOOP_ITERATIONS" default:"12"`
 
+	// 单次工具结果进入 LLM 上下文前的字符数上限，超出即截断；0 表示不限制
+	ToolResultMaxChars int `envconfig:"TOOL_RESULT_MAX_CHARS" default:"20000"`
+
 	// Skill 注入：清单数量小于该阈值时直接注入全文
 	SkillDirectThreshold int `envconfig:"SKILL_DIRECT_THRESHOLD" default:"3" desc:"skill 清单小于该数量时直接注入全文"`
 	// Skill 注入：频道默认加载的最近技能数量

@@ -30,11 +30,13 @@ import (
 	"iter"
 	"math/rand"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/cupogo/andvari/models/oid"
 	"github.com/liut/morign/pkg/models/convo"
 	"github.com/liut/morign/pkg/models/corpus"
+	"github.com/liut/morign/pkg/models/mcps"
 	"github.com/liut/morign/pkg/services/llm"
 	"github.com/liut/morign/pkg/settings"
 )
@@ -340,6 +342,47 @@ func TestIntegration_ListMemories(t *testing.T) {
 	t.Logf("Total memories: %d, returned: %d", total, len(data))
 }
 
+// TestIntegration_MCPListAllActive 钉住上游分页语义：零值 Limit 表示不加 LIMIT，全量返回
+func TestIntegration_MCPListAllActive(t *testing.T) {
+	sto := Sgt()
+	ctx := context.Background()
+
+	prefix := fmt.Sprintf("test-mcp-%d", os.Getpid())
+	created := make([]string, 0, 3)
+	defer func() {
+		for _, id := range created {
+			_ = sto.MCP().DeleteServer(ctx, id)
+		}
+	}()
+
+	for i := range 3 {
+		obj, err := sto.MCP().CreateServer(ctx, mcps.ServerBasic{
+			Name:      fmt.Sprintf("%s-%d", prefix, i),
+			TransType: mcps.TransTypeStreamable,
+			URL:       fmt.Sprintf("http://127.0.0.1:%d/mcp", 9000+i),
+			IsActive:  true,
+		})
+		if err != nil {
+			t.Fatalf("CreateServer failed: %v", err)
+		}
+		created = append(created, obj.ID.String())
+	}
+
+	data, _, err := sto.MCP().ListServer(ctx, &MCPServerSpec{IsActive: "true"})
+	if err != nil {
+		t.Fatalf("ListServer failed: %v", err)
+	}
+	found := 0
+	for i := range data {
+		if strings.HasPrefix(data[i].Name, prefix) {
+			found++
+		}
+	}
+	if found != 3 {
+		t.Errorf("listed %d of %d active servers created, want 3 (no limit means full scan)", found, len(created))
+	}
+}
+
 func TestIntegration_HistoryStoreAppendEvent(t *testing.T) {
 	sto := Sgt()
 	ctx := context.Background()
@@ -348,9 +391,9 @@ func TestIntegration_HistoryStoreAppendEvent(t *testing.T) {
 	hs := NewHistoryStore(sto)
 
 	event := &llm.Event{
-		Author:  "assistant",
-		Delta: "Hello, this is a test response",
-		Think:   "The user is testing",
+		Author: "assistant",
+		Delta:  "Hello, this is a test response",
+		Think:  "The user is testing",
 	}
 
 	if err := hs.AppendEvent(ctx, sessionID, event); err != nil {

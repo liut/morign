@@ -502,23 +502,32 @@ func callServerToolWithClient(ctx context.Context, c *client.Client, toolName st
 	return convertMCPToolResult(result), nil
 }
 
-// LoadServers 加载所有 Running 状态的 MCP Server
+// loadAllServerSpec 构建启动加载用的筛选条件：全部活跃 server，不做数量截断。
+// Limit 保持零值——上游分页在 limit == 0 且 page == 0 时不加 LIMIT，即全量返回。
+func loadAllServerSpec() *stores.MCPServerSpec {
+	spec := &stores.MCPServerSpec{IsActive: "true"}
+	spec.Sort = "created DESC"
+	return spec
+}
+
+// LoadServers 加载所有活跃的远程 MCP Server
 func (r *Registry) LoadServers(ctx context.Context, sto stores.Storage) error {
 	if sto == nil {
 		logger().Warnw("no storage configured, skipping MCP server load")
 		return nil
 	}
+	return r.loadServers(ctx, sto.MCP())
+}
 
-	spec := &stores.MCPServerSpec{
-		IsActive: "true",
-	}
-	spec.Limit = 2
-	spec.Sort = "created DESC"
-	servers, _, err := sto.MCP().ListServer(ctx, spec)
+// loadServers 从窄接口加载，避免为测试伪造整个 Storage。
+// 无 limit 时 ListServer 不计数，total 恒为 0，故以返回切片长度为准。
+func (r *Registry) loadServers(ctx context.Context, sto stores.MCPStore) error {
+	servers, _, err := sto.ListServer(ctx, loadAllServerSpec())
 	if err != nil {
 		return fmt.Errorf("failed to list MCP servers: %w", err)
 	}
 
+	loaded := 0
 	for i := range servers {
 		if !servers[i].TransType.IsRemote() {
 			logger().Infow("skipping non-remote MCP server", "name", servers[i].Name, "type", servers[i].TransType)
@@ -528,10 +537,11 @@ func (r *Registry) LoadServers(ctx context.Context, sto stores.Storage) error {
 			logger().Warnw("failed to load MCP server", "name", servers[i].Name, "err", err)
 			continue
 		}
+		loaded++
 		logger().Infow("loaded MCP server", "name", servers[i].Name)
 	}
 
-	logger().Info("MCP servers loaded", "count", len(servers))
+	logger().Infow("MCP servers loaded", "fetched", len(servers), "loaded", loaded)
 	return nil
 }
 

@@ -272,6 +272,7 @@ HTTPS_PROXY=socks5://proxy.my-company.xyz:1081
 | `MORIGN_VECTOR_LIMIT` | 6 | 向量匹配数量 |
 | `MORIGN_RERANK_ENABLED` | false | 是否启用能力匹配的 LLM 重排 |
 | `MORIGN_MAX_LOOP_ITERATIONS` | 12 | Agent 工具调用循环次数上限 |
+| `MORIGN_TOOL_RESULT_MAX_CHARS` | 20000 | 单次工具结果长度上限（字符数），超出即截断，0 表示不限制 |
 
 其他开关（skill 注入、记忆分层、OAuth、Sentry 等）可用 `./morign usage` 查看。
 
