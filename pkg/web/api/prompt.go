@@ -25,9 +25,9 @@ func (s storagePromptStore) Preset() aigc.Preset { return s.sto.Preset() }
 
 func (s storagePromptStore) Skill() agent.SkillStore { return s.sto.Skill() }
 
-// promptParts fills the stable blocks. Standing context — time, session id,
-// user identity, memories, retrieved documents — deliberately has no slot: it
-// reaches the model through tools instead of the prompt.
+// promptParts fills the stable blocks and the trailing session constants.
+// Per-turn data — time, memories, retrieved documents — deliberately has no
+// slot: it reaches the model through tools instead of the prompt.
 func promptParts(ctx context.Context, sto promptStore, toolNames map[string]bool,
 	skills []string, cs stores.Conversation) agent.SystemPromptParts {
 	preset := sto.Preset()
@@ -46,8 +46,20 @@ func promptParts(ctx context.Context, sto promptStore, toolNames map[string]bool
 	if toolNames[tools.ToolNameSkillRead] {
 		parts.Skills = skillIndex(ctx, sto, skills)
 	}
+	parts.SessionConstants = sessionConstants(ctx)
 
 	return parts
+}
+
+// sessionConstants renders the values fixed for the life of a conversation. It
+// carries the user's display name only: the session id, the uid and the OID all
+// stay out — the model has no use for identifiers. Rendering last keeps a new
+// conversation or another user from invalidating the shared prefix ahead of it.
+func sessionConstants(ctx context.Context) string {
+	if user, ok := stores.UserFromContext(ctx); ok && user.Name != "" {
+		return "Current user: " + user.Name
+	}
+	return ""
 }
 
 // prepareSystemMessage resolves tool definitions and renders the stable system

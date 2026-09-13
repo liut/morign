@@ -21,9 +21,11 @@ func TestStableMessageOrdersBlocks(t *testing.T) {
 			parts: SystemPromptParts{
 				Base: "base", Tools: "tools", Channel: "channel",
 				Memory: "memory guidance", Skills: "# Available Skills",
+				SessionConstants: "Current user: alice",
 			},
 			hasTools: true,
-			want:     "base\ntools\nchannel\nmemory guidance\n# Available Skills",
+			want: "base\ntools\nchannel\nmemory guidance\n# Available Skills\n" +
+				"Current user: alice",
 		},
 		{
 			name: "empty base falls back to default",

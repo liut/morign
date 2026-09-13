@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"testing"
@@ -33,7 +32,7 @@ func TestDumpPromptContent(t *testing.T) {
 		t.Skip("set MORRIGAN_DUMP_PROMPT=1 to dump the assembled prompt")
 	}
 	sto := dumpStore()
-	ctx := context.Background()
+	ctx := userCtx("1001", "林涛")
 	question := "帮我把上周的差旅报销算一下"
 	history := aigc.HistoryItems{
 		{ChatItem: &aigc.HistoryChatItem{User: "在吗", Assistant: "在的，请讲。"}},

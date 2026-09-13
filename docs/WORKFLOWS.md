@@ -36,7 +36,8 @@ sequenceDiagram
     API->>Prep: prepareChatRequest(ctx, param)
     Prep->>Prep: prepareSystemMessage()
     Note over Prep: 稳定 system: SystemPrompt + ToolsPrompt + ChannelPrompt + 记忆引导 + 技能索引
-    Note over Prep: 常驻数据（时间/身份/记忆/知识库）不进 prompt，经工具按需获取
+    Note over Prep: 末位会话常量: 用户名（会话内不变，故不影响前面的共享前缀）
+    Note over Prep: 逐轮数据（时间/记忆清单/知识库命中）不进 prompt，经工具按需获取
 
     Prep->>DB: ListHistory(sessionID)
     DB-->>Prep: 历史消息

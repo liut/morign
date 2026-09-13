@@ -66,8 +66,9 @@ func allTools() map[string]bool {
 	}
 }
 
-func userCtx(oidStr string) context.Context {
-	return auth.ContextWithUser(context.Background(), &auth.User{OID: oidStr, UID: "u", Name: "u"})
+func userCtx(oidStr, name string) context.Context {
+	return auth.ContextWithUser(context.Background(),
+		&auth.User{OID: oidStr, UID: "uid-" + name, Name: name})
 }
 
 func TestPromptPartsStableAcrossTurns(t *testing.T) {
@@ -78,27 +79,56 @@ func TestPromptPartsStableAcrossTurns(t *testing.T) {
 	}
 	cs := &fakeConversation{id: "s1", channel: "wecom"}
 
-	first := promptParts(context.Background(), sto, allTools(), nil, cs).StableMessage().Content
-	second := promptParts(context.Background(), sto, allTools(), nil, cs).StableMessage().Content
+	ctx := userCtx("1001", "alice")
+	first := promptParts(ctx, sto, allTools(), nil, cs).StableMessage().Content
+	second := promptParts(ctx, sto, allTools(), nil, cs).StableMessage().Content
 
 	if first != second {
 		t.Errorf("stable message changed between turns:\n%q\n%q", first, second)
 	}
 }
 
-func TestPromptPartsIgnoresRequestUser(t *testing.T) {
+func TestPromptPartsCarriesSessionConstantsLast(t *testing.T) {
 	sto := newFakePromptStore()
-	sto.skill = &fakeSkillStore{
-		byName: map[string]*skills.Skill{"invoice": skillEntry("invoice", "开发票", "INVOICE_BODY")},
-		recent: []skills.Skill{{SkillBasic: skills.SkillBasic{Name: "invoice", Description: "开发票"}}},
-	}
 	cs := &fakeConversation{id: "s1", channel: "wecom"}
 
-	logged := promptParts(userCtx("1001"), sto, allTools(), nil, cs).StableMessage().Content
-	anon := promptParts(context.Background(), sto, allTools(), nil, cs).StableMessage().Content
+	parts := promptParts(userCtx("1001", "alice"), sto, allTools(), nil, cs)
 
-	if logged != anon {
-		t.Errorf("user identity leaked into the prompt:\n%q\n%q", logged, anon)
+	want := "Current user: alice"
+	if parts.SessionConstants != want {
+		t.Errorf("session constants = %q, want %q", parts.SessionConstants, want)
+	}
+	content := parts.StableMessage().Content
+	if !strings.HasSuffix(content, want) {
+		t.Errorf("session constants must close the system message: %q", content)
+	}
+	// Only the display name is injected; identifiers are not the model's business.
+	for _, unwanted := range []string{"uid-alice", "1001", "s1"} {
+		if strings.Contains(content, unwanted) {
+			t.Errorf("prompt leaked %q: %q", unwanted, content)
+		}
+	}
+}
+
+func TestPromptPartsWithoutUserCarriesNoConstants(t *testing.T) {
+	cs := &fakeConversation{id: "s1", channel: "wecom"}
+
+	parts := promptParts(context.Background(), newFakePromptStore(), allTools(), nil, cs)
+
+	if parts.SessionConstants != "" {
+		t.Errorf("session constants = %q, want none", parts.SessionConstants)
+	}
+}
+
+func TestPromptPartsSessionConstantsAreTheOnlyPerUserDifference(t *testing.T) {
+	sto := newFakePromptStore()
+
+	alice := promptParts(userCtx("1001", "alice"), sto, allTools(), nil, &fakeConversation{id: "s1", channel: "wecom"})
+	bob := promptParts(userCtx("1002", "bob"), sto, allTools(), nil, &fakeConversation{id: "s2", channel: "wecom"})
+
+	alice.SessionConstants, bob.SessionConstants = "", ""
+	if alice != bob {
+		t.Errorf("session constants must be the only per-user difference:\n%+v\n%+v", alice, bob)
 	}
 }
 
@@ -123,9 +153,10 @@ func TestPromptPartsCarriesOnlyStableContent(t *testing.T) {
 			t.Errorf("stable message missing %q: %q", want, stable.Content)
 		}
 	}
-	// R2: standing context never enters the prompt.
+	// R2: per-turn context never enters the prompt. Identity is covered by
+	// TestPromptPartsCarriesSessionConstantsLast.
 	for _, unwanted := range []string{
-		"INVOICE_BODY", "当前时辰", "SessionID", "Current User", "memory related to user ID",
+		"INVOICE_BODY", "当前时辰", "Current user", "memory related to user ID",
 	} {
 		if strings.Contains(stable.Content, unwanted) {
 			t.Errorf("stable message leaked %q: %q", unwanted, stable.Content)

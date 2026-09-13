@@ -32,7 +32,7 @@ Q 被选中是因为：上一版的病灶正是"数据以用户口吻出现在�
 ## Requirements
 
 - R1. system 消息只由稳定块构成：preset 正文、工具说明、频道说明、记忆引导、技能索引（仅 name/description）。同一会话连续两轮字节级一致。
-- R2. 时间、SessionID、用户身份、记忆清单、知识库命中不出现在任何发给模型的消息里。
+- R2.（2026-09-13 修订）逐轮变化的常驻数据——时间、记忆清单、知识库命中——不出现在任何发给模型的消息里。会话内不变的**会话常量**（当前只有用户显示名）放在 system **末尾**：排在最后才不会打断前面可复用的共享前缀；uid/OID 与会话号暂不注入。
 - R3. 记忆只经工具（`memory_list` / `memory_recall` / `memory_store` / `memory_forget`）访问；稳定块提供一段记忆使用引导，替代被移除的记忆清单。
 - R4. 技能只以索引（name + description）出现在 system；技能正文经 `skill_read` 工具或**显式激活**取得。
 - R5. 显式技能激活（频道 `/skill <name>`）以 user 消息形式注入技能全文，位置在历史之后、本轮提问之前；无激活时不产生该消息。
@@ -46,12 +46,12 @@ Q 被选中是因为：上一版的病灶正是"数据以用户口吻出现在�
 - 不改记忆的检索、衰减与 tier 策略，不改记忆工具的参数与语义。
 - 不改 preset 字段、不改 `docs/*.yaml` 契约、不触发 `make codegen`。
 - 不做上下文压缩与历史持久化改造（历史窗口滑动是独立议题，见对照研究 4.6）。
-- 不为环境数据新增"会话常量"层：不把 SessionID/身份放进 system 末尾（那是 P 的形态）。
+- 会话常量只收"会话内不变"的值，且必须排在 system 末尾一位；逐轮或跨会话变化的量（时间、记忆清单、知识库命中、技能正文）一律不进 prompt。当前只填用户显示名，会话号保留该槽位待有需要时再放。
 
 ### Deferred to Follow-Up Work
 
 - **时间能力**：已由 `current_time` 工具承接（`ToolNameCurrentTime`，无条件注册，描述一句话）：模型需要时自行调用，prompt 不承担时间。原 `agent.ThisMoment()` 的时辰换算随之迁入 `pkg/services/tools/invokers.go`，`DateInContext` 保持删除。
-- **身份可见性**：模型将不再知道用户姓名/UID。若需要，可在 system 末尾放会话常量（P 形态）或提供 `user_profile` 工具——需产品决策。
+- **身份可见性**：2026-09-13 已决策并落地——system 末尾注入 `Current user: <显示名>`，uid/OID 不注入。若将来需要 `user_profile` 工具，另立计划。
 - **Web 侧技能激活**：`ChatRequest.Skills` 现在是索引范围（元数据），不再触发全文直注；Web 侧若需要强制加载，应新增显式激活入口或依赖 `skill_read`。
 - **缓存命中计数暴露**：`prompt_cache_hit_tokens`/`miss` 仍未记录，无法量化稳定块的实际收益。
 
@@ -268,7 +268,7 @@ activation = render(Activation)                            -> user 消息（为�
 - **State lifecycle risks:** 无新增持久化；激活消息不落历史、不计用量。
 - **API surface parity:** HTTP 与频道契约不变；`ChatRequest.Skills` 语义从"可触发全文直注"收敛为"索引范围"（与字段注释一致）。
 - **Unchanged invariants:** preset 字段集合、`docs/*.yaml` 契约、工具定义与工具说明文本、记忆检索与衰减策略、重试/Regenerate 语义、频道去重、用量 `MsgCount` 口径。
-- **Capability regressions（需产品确认）:** 模型不再知道当前时间、用户身份与 SessionID；记忆需要主动调工具。
+- **Capability regressions:** 模型不再知道当前时间与会话号；用户显示名已按末位会话常量注入；记忆需要主动调工具。
 
 ---
 
@@ -278,7 +278,7 @@ activation = render(Activation)                            -> user 消息（为�
 |------|------------|
 | 取消记忆清单后模型不去查记忆，记忆能力形同虚设 | 稳定块加记忆引导；若观察仍不查，回退到 P（冻结快照）而非恢复逐轮注入 |
 | 技能索引放 system 后，技能变更会改变 system 字节 | 技能索引只随"可见技能集/请求参数"变化，属低频；换来的是取消逐轮注入 |
-| 模型失去时间/身份感知 | 列入 Deferred：时间走 `current_time` 工具，身份走会话常量或工具，按产品需要再加 |
+| 模型失去时间/身份感知 | 时间走 `current_time` 工具；身份走末位会话常量（已落地）；会话号暂不注入 |
 | Web 客户端依赖 `skills` 触发全文直注 | 字段注释本就声明为索引范围；行为变化写进 Release 说明与计划，必要时新增显式激活入口 |
 | 稳定块内容增多导致 prompt 变长 | 索引仅 name/description，引导一段话；相比被移除的每轮清单/全文是净减少 |
 

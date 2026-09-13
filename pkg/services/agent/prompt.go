@@ -26,20 +26,30 @@ const (
 	ActivationHeader = "# Activated Skill"
 )
 
-// SystemPromptParts carries the stable system blocks plus the optional
-// explicit activation block.
+// SystemPromptParts carries the stable system blocks, the trailing session
+// constants and the optional explicit activation block.
 //
-// Standing context stays out of the prompt entirely: time, session id, user
-// identity, the memory index and retrieved documents all reach the model
-// through tools. The only per-turn injection is an explicitly activated
-// skill, which renders as a user message placed after the history and before
-// the current question.
+// Everything ahead of SessionConstants is byte-identical for requests sharing
+// a preset, a channel, a tool set and a visible-skill set, so it forms a prefix
+// worth reusing. Values fixed for the life of one conversation — today only the
+// user's display name — render last, so a new conversation or a different user
+// only costs the tail, never the shared blocks.
+//
+// Data that changes per turn or per request stays out of the prompt entirely:
+// time, the memory index and retrieved documents reach the model through tools.
+// The only per-turn injection is an explicitly activated skill, which renders
+// as a user message placed after the history and before the current question.
 type SystemPromptParts struct {
 	Base    string // preset system prompt
 	Tools   string // tool-usage prompt
 	Channel string // channel prompt
 	Memory  string // memory usage guidance
 	Skills  string // skills index, names and descriptions only
+
+	// SessionConstants holds values fixed for the life of a conversation; today
+	// that is the user's display name. It renders last, so it never breaks the
+	// shared prefix ahead of it.
+	SessionConstants string
 
 	// Activation holds the full text of a skill the caller explicitly
 	// activated (the /skill command). It is per-turn content, so it renders as
@@ -66,7 +76,7 @@ func (p SystemPromptParts) Normalize(hasTools bool) SystemPromptParts {
 func (p SystemPromptParts) StableMessage() llm.Message {
 	return llm.Message{
 		Role:    llm.RoleSystem,
-		Content: joinBlocks([]string{p.Base, p.Tools, p.Channel, p.Memory, p.Skills}),
+		Content: joinBlocks([]string{p.Base, p.Tools, p.Channel, p.Memory, p.Skills, p.SessionConstants}),
 	}
 }
 
