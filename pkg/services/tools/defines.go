@@ -13,6 +13,8 @@ const (
 	ToolNameKBCreate = "kb_create" // 知识库创建工具
 	ToolNameFetch    = "fetch"     // 网页抓取工具
 
+	ToolNameCurrentTime = "current_time" // 当前时间工具
+
 	ToolNameMemoryList   = "memory_list"   // 记忆列表工具
 	ToolNameMemoryRecall = "memory_recall" // 记忆召回工具
 	ToolNameMemoryStore  = "memory_store"  // 记忆存储工具
@@ -26,6 +28,16 @@ const (
 
 // ToolDescriptor 变量定义
 var (
+	// currentTimeDescriptor 当前时间工具描述
+	currentTimeDescriptor = mcps.ToolDescriptor{
+		Name:        ToolNameCurrentTime,
+		Description: "Get the current date and time.",
+		InputSchema: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{},
+		},
+	}
+
 	// kbSearchDescriptor 知识库搜索工具描述
 	kbSearchDescriptor = mcps.ToolDescriptor{
 		Name:        ToolNameKBSearch,

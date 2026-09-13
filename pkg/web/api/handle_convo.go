@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -21,7 +20,6 @@ import (
 	"github.com/liut/morign/pkg/services/agent"
 	"github.com/liut/morign/pkg/services/llm"
 	"github.com/liut/morign/pkg/services/stores"
-	"github.com/liut/morign/pkg/services/tools"
 	"github.com/liut/morign/pkg/settings"
 	"github.com/liut/morign/pkg/utils/words"
 )
@@ -51,6 +49,7 @@ func init() {
 // chatRequest 内部聊天请求结构
 type chatRequest struct {
 	messages []llm.Message
+	msgCount int // conversation messages, excluding an injected activation message
 	tools    []llm.ToolDefinition
 	isSSE    bool
 	cs       stores.Conversation
@@ -58,145 +57,36 @@ type chatRequest struct {
 	skills   []string
 }
 
-// prepareSystemMessage 准备系统消息，包括基础 prompt、记忆、工具或知识库
-func prepareSystemMessage(ctx context.Context, sto stores.Storage,
-	toolreg *tools.Registry, prompt string, skills []string, cs stores.Conversation) (
-	llm.Message, []llm.ToolDefinition) {
-	var sb strings.Builder
-
-	if len(sto.Preset().SystemPrompt) > 0 {
-		sb.WriteString(sto.Preset().SystemPrompt)
-	} else {
-		sb.WriteString(agent.DefaultSystemMsg)
-	}
-
-	if settings.Current.DateInContext {
-		sb.WriteString("\n")
-		sb.WriteString(agent.ThisMoment())
-	}
-
-	fmt.Fprintf(&sb, "\nCurrent SessionID: %s\n", cs.GetID())
-
-	if user, ok := stores.UserFromContext(ctx); ok {
-		sb.WriteString("\nCurrent User:\n")
-		if user.UID == user.Name {
-			fmt.Fprintf(&sb, "Name and uid: %s\n", user.UID)
-		} else {
-			fmt.Fprintf(&sb, "Name: %s\nuid: %s\n", user.Name, user.UID)
-		}
-		fmt.Fprintf(&sb, "ID: %s\n", user.OID)
-
-		momories, _, err := sto.Convo().ListMemory(ctx, &stores.ConvoMemorySpec{IsOwner: true})
-		if err == nil {
-			mtext := momories.PrettyTextForOwner()
-			logger().Debug("load memories", "keys", momories.Keys(), "text", words.TakeTail(mtext, 10, ".."))
-			sb.WriteString("\n")
-			sb.WriteString(mtext)
-		} else {
-			logger().Info("ListMemory fail", "err", err)
-		}
-	}
-
-	// 转换 MCP 工具为 LLM 工具定义
-	tools := agent.ConvertMCPToolsToLLMTools(toolreg.ToolsFor(ctx))
-	if len(tools) > 0 {
-		toolsPrompt := agent.DefaultToolsMsg
-		if len(sto.Preset().ToolsPrompt) > 0 {
-			toolsPrompt = sto.Preset().ToolsPrompt
-		}
-		sb.WriteString("\n")
-		sb.WriteString(toolsPrompt)
-		cs.SetTools(llm.Tools(tools).Names()...)
-	} else {
-		docs, err := sto.Corpus().MatchDocments(ctx, stores.MatchSpec{
-			Query: prompt,
-			Limit: 5,
-		})
-		if err == nil {
-			logger().Info("matches", "docs", len(docs), "prompt", prompt)
-			content := docs.MarkdownText()
-			if len(docs) == 0 {
-				content += "\nPlease honestly state that you don't know rather than making up an answer."
-			}
-			sb.WriteString("\n")
-			sb.WriteString(content)
-		} else {
-			logger().Warn("match fail", "err", err)
-			sb.WriteString("\n知识库查询服务暂时不可用，请稍后再试或联系管理员。")
-		}
-	}
-
-	if len(cs.GetChannel()) > 0 && len(sto.Preset().ChannelPrompt) > 0 {
-		sb.WriteString("\n")
-		sb.WriteString(sto.Preset().ChannelPrompt)
-	}
-
-	appendSkillPrompt(ctx, &sb, sto.Skill(), skills)
-
-	msg := llm.Message{
-		Role:    llm.RoleSystem,
-		Content: sb.String(),
-	}
-
-	return msg, tools
-}
-
-// appendSkillPrompt 将技能注入块追加到 system prompt 构建器，失败时降级为空。
-func appendSkillPrompt(ctx context.Context, sb *strings.Builder, sk agent.SkillStore, requested []string) {
-	block, err := agent.BuildSkillPrompt(ctx, sk, requested)
-	if err != nil {
-		logger().Warn("skill prompt fail", "err", err)
-		return
-	}
-	if block != "" {
-		sb.WriteString(block)
-	}
-}
-
 func (a *api) prepareChatRequest(ctx context.Context, param *ChatRequest) *chatRequest {
 	cs := stores.NewConversation(ctx, param.GetConversionID())
 
-	sysMsg, tools := prepareSystemMessage(ctx, a.sto, a.toolreg, param.Prompt, param.Skills, cs)
-	messages := []llm.Message{sysMsg}
+	sysMsg, tools := prepareSystemMessage(ctx, storagePromptStore{a.sto}, a.toolreg, param.Skills, cs)
 
-	data, err := cs.ListHistory(ctx)
-	if err == nil && len(data) > 0 {
-		logger().Info("found history", "size", len(data), "hist", aigc.HiLogged(data))
-		data = data.RecentlyWithTokens(historyLimitToken)
+	history, err := cs.ListHistory(ctx)
+	if err != nil || len(history) == 0 {
+		history = nil
+	} else {
+		logger().Info("found history", "size", len(history), "hist", aigc.HiLogged(history))
+		history = history.RecentlyWithTokens(historyLimitToken)
+	}
 
-		for i, hi := range data {
-			if hi.ChatItem != nil {
-				isLast := i == len(data)-1
-				isRetry := hi.ChatItem.User == param.Prompt
-
-				// 最后一条特殊处理：如果是重试或 Regenerate，完全跳过这一条历史
-				if isLast && (isRetry || param.Regenerate) {
-					logger().Debug("skip last history", "retry", isRetry, "regenerate", param.Regenerate)
-					break
-				}
-
-				// 添加 User
-				if len(hi.ChatItem.User) > 0 {
-					messages = append(messages, llm.Message{
-						Role: llm.RoleUser, Content: hi.ChatItem.User})
-				}
-
-				// 添加 Assistant
-				if len(hi.ChatItem.Assistant) > 0 {
-					messages = append(messages, llm.Message{
-						Role: llm.RoleAssistant, Content: hi.ChatItem.Assistant})
-				}
+	// 最后一条特殊处理：如果是重试或 Regenerate，完全跳过这一条历史
+	var skipLast bool
+	if len(history) > 0 {
+		if last := history[len(history)-1]; last.ChatItem != nil {
+			isRetry := last.ChatItem.User == param.Prompt
+			if isRetry || param.Regenerate {
+				logger().Debug("skip last history", "retry", isRetry, "regenerate", param.Regenerate)
+				skipLast = true
 			}
 		}
 	}
 
-	messages = append(messages, llm.Message{
-		Role:    llm.RoleUser,
-		Content: param.Prompt,
-	})
+	messages := chatMessages(sysMsg, nil, history, param.Prompt, skipLast)
 
 	return &chatRequest{
 		messages: messages,
+		msgCount: conversationMsgCount(messages, nil),
 		tools:    tools,
 		cs:       cs,
 		prompt:   param.Prompt,
@@ -346,7 +236,7 @@ func (a *api) handleSSEStream(w http.ResponseWriter, r *http.Request, loop *agen
 					Author:   "assistant",
 					Usage:    event.Usage,
 					Model:    event.Model,
-					MsgCount: len(ccr.messages),
+					MsgCount: ccr.msgCount,
 					Meta:     meta,
 				}); err != nil {
 					logger().Info("persist usage fail", "err", err)

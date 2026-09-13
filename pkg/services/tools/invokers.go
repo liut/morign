@@ -20,6 +20,44 @@ const (
 	DEFAULT_USER_AGENT_AUTONOMOUS = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 
+// invokeCurrentTime reports the local date, time and 时辰. The 时辰 line keeps
+// the wording prompts carried before time moved out of the prompt.
+func invokeCurrentTime(context.Context, map[string]any) (map[string]any, error) {
+	now := time.Now()
+	return mcps.BuildToolSuccessResult(fmt.Sprintf("%s\n当前时辰: %s",
+		now.Format("2006-01-02 15:04:05 -0700 MST"), shichen(now.Hour()))), nil
+}
+
+// shichen maps an hour to its Chinese two-hour period.
+func shichen(hour int) string {
+	switch {
+	case hour >= 23 || hour < 1:
+		return "子时"
+	case hour < 3:
+		return "丑时"
+	case hour < 5:
+		return "寅时"
+	case hour < 7:
+		return "卯时"
+	case hour < 9:
+		return "辰时"
+	case hour < 11:
+		return "巳时"
+	case hour < 13:
+		return "午时"
+	case hour < 15:
+		return "未时"
+	case hour < 17:
+		return "申时"
+	case hour < 19:
+		return "酉时"
+	case hour < 21:
+		return "戌时"
+	default:
+		return "亥时"
+	}
+}
+
 // Fetch implementation
 func (r *Registry) callFetch(ctx context.Context, args map[string]any) (map[string]any, error) {
 	var (

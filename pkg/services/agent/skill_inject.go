@@ -14,10 +14,10 @@ type SkillStore interface {
 	LoadForName(ctx context.Context, name string) (*skills.Skill, error)
 }
 
-// BuildSkillPrompt 组装注入 system prompt 的技能块：
-// 清单数量小于阈值时直注全文，否则仅注入 name+description 元数据。
+// BuildSkillIndex 组装注入 system prompt 的技能索引：只有 name 与
+// description 元数据，技能正文经 skill_read 工具或显式激活取得。
 // 无可见技能时返回空字符串。
-func BuildSkillPrompt(ctx context.Context, sk SkillStore, requested []string) (string, error) {
+func BuildSkillIndex(ctx context.Context, sk SkillStore, requested []string) (string, error) {
 	names, err := resolveNames(ctx, sk, requested)
 	if err != nil || len(names) == 0 {
 		return "", err
@@ -32,17 +32,6 @@ func BuildSkillPrompt(ctx context.Context, sk SkillStore, requested []string) (s
 	}
 	if len(objs) == 0 {
 		return "", nil
-	}
-	if len(objs) < settings.Current.SkillDirectThreshold {
-		var sb strings.Builder
-		sb.WriteString("\n\n# Skills\n")
-		for _, obj := range objs {
-			sb.WriteString("\n## Skill: ")
-			sb.WriteString(obj.Name)
-			sb.WriteString("\n")
-			sb.WriteString(obj.Content)
-		}
-		return sb.String(), nil
 	}
 	var sb strings.Builder
 	sb.WriteString("\n\n# Available Skills\n")

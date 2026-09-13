@@ -348,11 +348,10 @@ func translateLLMErrorToUser(err error) string {
 
 // buildChatMessagesAndTools builds the message list and returns tools for the chat.
 func (chh *channelHandler) buildChatMessagesAndTools(ctx context.Context, msg *channel.Message, cs stores.Conversation) ([]llm.Message, []llm.ToolDefinition) {
-	var requested []string
-	if msg.SkillName != "" {
-		requested = []string{msg.SkillName}
-	}
-	sysMsg, tools := prepareSystemMessage(ctx, chh.sto, chh.toolreg, msg.Content, requested, cs)
+	// /skill <name> is an explicit activation: the skill's full text travels as
+	// a user message for this turn only, never as standing context.
+	activation := activatedSkill(ctx, chh.sto.Skill(), msg.SkillName)
+	sysMsg, tools := prepareSystemMessage(ctx, storagePromptStore{chh.sto}, chh.toolreg, nil, cs)
 
 	content := msg.Content
 	if len(msg.Images) > 0 {
@@ -362,19 +361,6 @@ func (chh *channelHandler) buildChatMessagesAndTools(ctx context.Context, msg *c
 		content += "\n[User sent a voice message]"
 	}
 
-	messages := []llm.Message{sysMsg}
 	history, _ := cs.ListHistory(ctx)
-	for _, hi := range history {
-		if hi.ChatItem != nil {
-			if hi.ChatItem.User != "" {
-				messages = append(messages, llm.Message{Role: llm.RoleUser, Content: hi.ChatItem.User})
-			}
-			if hi.ChatItem.Assistant != "" {
-				messages = append(messages, llm.Message{Role: llm.RoleAssistant, Content: hi.ChatItem.Assistant})
-			}
-		}
-	}
-	messages = append(messages, llm.Message{Role: llm.RoleUser, Content: content})
-
-	return messages, tools
+	return chatMessages(sysMsg, activation, history, content, false), tools
 }
