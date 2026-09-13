@@ -36,34 +36,37 @@ func newFakeStore() *fakeSkillStore {
 	}
 }
 
-func TestBuildSkillPromptDirectInjection(t *testing.T) {
-	settings.Current.SkillDirectThreshold = 3
+func TestBuildSkillIndexStaysMetadataOnly(t *testing.T) {
 	f := newFakeStore()
 	f.byName["a"] = skillOf("a", "A", "content-a")
 	f.byName["b"] = skillOf("b", "B", "content-b")
 
-	out, err := BuildSkillPrompt(context.Background(), f, []string{"b", "a", "b", ""})
+	out, err := BuildSkillIndex(context.Background(), f, []string{"b", "a", "b", ""})
 	if err != nil {
-		t.Fatalf("BuildSkillPrompt: %v", err)
+		t.Fatalf("BuildSkillIndex: %v", err)
 	}
-	if !strings.Contains(out, "content-a") || !strings.Contains(out, "content-b") {
-		t.Errorf("direct injection missing full content: %q", out)
+	for _, name := range []string{"a", "b"} {
+		if !strings.Contains(out, "- "+name+": ") {
+			t.Errorf("index missing %s: %q", name, out)
+		}
+		if strings.Contains(out, "content-"+name) {
+			t.Errorf("index leaked skill body for %s: %q", name, out)
+		}
 	}
-	if strings.Contains(out, "skill_read") {
-		t.Errorf("direct injection should not contain tool hint: %q", out)
+	if !strings.Contains(out, "skill_read") {
+		t.Errorf("index should hint skill_read: %q", out)
 	}
 }
 
-func TestBuildSkillPromptMetadata(t *testing.T) {
-	settings.Current.SkillDirectThreshold = 3
+func TestBuildSkillIndexMetadata(t *testing.T) {
 	f := newFakeStore()
 	for _, name := range []string{"a", "b", "c", "d", "e"} {
 		f.byName[name] = skillOf(name, "desc-"+name, "content-"+name)
 	}
 
-	out, err := BuildSkillPrompt(context.Background(), f, []string{"a", "b", "c", "d", "e"})
+	out, err := BuildSkillIndex(context.Background(), f, []string{"a", "b", "c", "d", "e"})
 	if err != nil {
-		t.Fatalf("BuildSkillPrompt: %v", err)
+		t.Fatalf("BuildSkillIndex: %v", err)
 	}
 	for _, name := range []string{"a", "b", "c", "d", "e"} {
 		if !strings.Contains(out, "desc-"+name) {
@@ -78,48 +81,53 @@ func TestBuildSkillPromptMetadata(t *testing.T) {
 	}
 }
 
-func TestBuildSkillPromptDefaults(t *testing.T) {
-	settings.Current.SkillDirectThreshold = 3
+func TestBuildSkillIndexDefaults(t *testing.T) {
 	settings.Current.SkillDefaultCount = 2
 	f := newFakeStore()
-	f.byName["n1"] = skillOf("n1", "D1", "c1")
-	f.byName["n2"] = skillOf("n2", "D2", "c2")
+	f.byName["n1"] = skillOf("n1", "D1", "body-1")
+	f.byName["n2"] = skillOf("n2", "D2", "body-2")
+	f.byName["n3"] = skillOf("n3", "D3", "body-3")
 	f.recent = []skills.Skill{
 		{SkillBasic: skills.SkillBasic{Name: "n1"}},
 		{SkillBasic: skills.SkillBasic{Name: "n2"}},
 		{SkillBasic: skills.SkillBasic{Name: "n3"}},
 	}
 
-	out, err := BuildSkillPrompt(context.Background(), f, nil)
+	out, err := BuildSkillIndex(context.Background(), f, nil)
 	if err != nil {
-		t.Fatalf("BuildSkillPrompt: %v", err)
+		t.Fatalf("BuildSkillIndex: %v", err)
 	}
-	if !strings.Contains(out, "c1") || !strings.Contains(out, "c2") {
-		t.Errorf("default top-2 should inject full content: %q", out)
+	if !strings.Contains(out, "- n1: D1") || !strings.Contains(out, "- n2: D2") {
+		t.Errorf("default top-2 missing from index: %q", out)
+	}
+	if strings.Contains(out, "n3") {
+		t.Errorf("index exceeded SkillDefaultCount: %q", out)
 	}
 }
 
-func TestBuildSkillPromptSkipsInvisible(t *testing.T) {
-	settings.Current.SkillDirectThreshold = 3
+func TestBuildSkillIndexSkipsInvisible(t *testing.T) {
 	f := newFakeStore()
 	f.byName["a"] = skillOf("a", "A", "content-a")
 
-	out, err := BuildSkillPrompt(context.Background(), f, []string{"a", "missing"})
+	out, err := BuildSkillIndex(context.Background(), f, []string{"a", "missing"})
 	if err != nil {
-		t.Fatalf("BuildSkillPrompt: %v", err)
+		t.Fatalf("BuildSkillIndex: %v", err)
 	}
-	if !strings.Contains(out, "content-a") {
-		t.Errorf("visible skill should be injected: %q", out)
+	if !strings.Contains(out, "- a: A") {
+		t.Errorf("visible skill should be listed: %q", out)
+	}
+	if strings.Contains(out, "missing") {
+		t.Errorf("invisible skill should be skipped: %q", out)
 	}
 }
 
-func TestBuildSkillPromptEmpty(t *testing.T) {
-	out, err := BuildSkillPrompt(context.Background(), newFakeStore(), nil)
+func TestBuildSkillIndexEmpty(t *testing.T) {
+	out, err := BuildSkillIndex(context.Background(), newFakeStore(), nil)
 	if err != nil {
-		t.Fatalf("BuildSkillPrompt: %v", err)
+		t.Fatalf("BuildSkillIndex: %v", err)
 	}
 	if out != "" {
-		t.Errorf("empty store should return empty prompt, got %q", out)
+		t.Errorf("empty store should return empty index, got %q", out)
 	}
 }
 

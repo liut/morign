@@ -57,8 +57,6 @@ type Config struct {
 
 	AskRateLimit string `envconfig:"Ask_Rate_Limit" default:"20-H"`
 
-	DateInContext bool `envconfig:"date_in_context"`
-
 	KeeperRole string   `envconfig:"Keeper_Role" default:"keeper" desc:"role required for write tools"`
 	KeeperUIDs []string `envconfig:"Keeper_UIDs" desc:"uid list that bypasses role check"`
 
@@ -73,8 +71,6 @@ type Config struct {
 	// 单次工具结果进入 LLM 上下文前的字符数上限，超出即截断；0 表示不限制
 	ToolResultMaxChars int `envconfig:"TOOL_RESULT_MAX_CHARS" default:"20000"`
 
-	// Skill 注入：清单数量小于该阈值时直接注入全文
-	SkillDirectThreshold int `envconfig:"SKILL_DIRECT_THRESHOLD" default:"3" desc:"skill 清单小于该数量时直接注入全文"`
 	// Skill 注入：频道默认加载的最近技能数量
 	SkillDefaultCount int `envconfig:"SKILL_DEFAULT_COUNT" default:"5" desc:"频道默认加载的最近技能数量"`
 

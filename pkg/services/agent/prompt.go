@@ -3,12 +3,10 @@ package agent
 import (
 	"context"
 	"strings"
-	"time"
 
 	"github.com/liut/morign/pkg/models/mcps"
 	"github.com/liut/morign/pkg/services/llm"
 	"github.com/liut/morign/pkg/services/tools"
-	"github.com/liut/morign/pkg/settings"
 )
 
 const (
@@ -17,42 +15,80 @@ const (
 
 	// DefaultToolsMsg is the fallback tool-usage prompt when no preset is configured.
 	DefaultToolsMsg = "You will select the appropriate tool based on the user's question and call the tool to solve the problem. If the tool returns no relevant information, honestly state that you don't know rather than making up an answer. If the tool requires parameters, you must extract them from the user's question. Note that it is important to clearly distinguish between read and write operations. If a write operation is required by the tool, it must be explicitly stated in the user's question for writing purposes (such as adding, creating, appending, modifying, etc.), and all necessary parameters for the tool must be included in the user's question before calling; otherwise, treat it as a regular read operation or Q&A."
+
+	// MemoryGuidance is the stable instruction that tells the model its
+	// long-term memory exists and how to reach it. The memory index is not
+	// injected into the prompt, so this block is what makes the model look.
+	MemoryGuidance = "Long-term memory about the current user lives behind tools, not in this prompt. Call memory_list to see what is stored, memory_recall to search it by keyword, and memory_store to save durable facts the user shares. Check memory before answering questions about the user's preferences, history, or personal context."
+
+	// ActivationHeader opens the message carrying an explicitly activated
+	// skill, so it cannot be mistaken for the user's own words.
+	ActivationHeader = "# Activated Skill"
 )
 
-// ThisMoment returns a timestamp string in Chinese 时辰 format.
-func ThisMoment() string {
-	now := time.Now()
-	hour := now.Hour()
+// SystemPromptParts carries the stable system blocks plus the optional
+// explicit activation block.
+//
+// Standing context stays out of the prompt entirely: time, session id, user
+// identity, the memory index and retrieved documents all reach the model
+// through tools. The only per-turn injection is an explicitly activated
+// skill, which renders as a user message placed after the history and before
+// the current question.
+type SystemPromptParts struct {
+	Base    string // preset system prompt
+	Tools   string // tool-usage prompt
+	Channel string // channel prompt
+	Memory  string // memory usage guidance
+	Skills  string // skills index, names and descriptions only
 
-	var shichen string
-	switch {
-	case hour >= 23 || hour < 1:
-		shichen = "子时"
-	case hour >= 1 && hour < 3:
-		shichen = "丑时"
-	case hour >= 3 && hour < 5:
-		shichen = "寅时"
-	case hour >= 5 && hour < 7:
-		shichen = "卯时"
-	case hour >= 7 && hour < 9:
-		shichen = "辰时"
-	case hour >= 9 && hour < 11:
-		shichen = "巳时"
-	case hour >= 11 && hour < 13:
-		shichen = "午时"
-	case hour >= 13 && hour < 15:
-		shichen = "未时"
-	case hour >= 15 && hour < 17:
-		shichen = "申时"
-	case hour >= 17 && hour < 19:
-		shichen = "酉时"
-	case hour >= 19 && hour < 21:
-		shichen = "戌时"
-	case hour >= 21 && hour < 23:
-		shichen = "亥时"
+	// Activation holds the full text of a skill the caller explicitly
+	// activated (the /skill command). It is per-turn content, so it renders as
+	// a user message rather than living in the system prompt.
+	Activation string
+}
+
+// Normalize applies the defaults that depend on whether tools are available.
+// Tool prompts are only rendered when there is at least one tool.
+func (p SystemPromptParts) Normalize(hasTools bool) SystemPromptParts {
+	if p.Base == "" {
+		p.Base = DefaultSystemMsg
 	}
+	if !hasTools {
+		p.Tools = ""
+	} else if p.Tools == "" {
+		p.Tools = DefaultToolsMsg
+	}
+	return p
+}
 
-	return "当前时辰: " + now.Format("2006-01-02") + " " + shichen
+// StableMessage renders the system message. Consecutive turns with the same
+// preset, channel, tool set and visible skills produce byte-identical content.
+func (p SystemPromptParts) StableMessage() llm.Message {
+	return llm.Message{
+		Role:    llm.RoleSystem,
+		Content: joinBlocks([]string{p.Base, p.Tools, p.Channel, p.Memory, p.Skills}),
+	}
+}
+
+// ActivatedMessage renders an explicitly activated skill as a user message, or
+// nil when nothing was activated.
+func (p SystemPromptParts) ActivatedMessage() *llm.Message {
+	content := joinBlocks([]string{ActivationHeader, p.Activation})
+	if content == ActivationHeader {
+		return nil
+	}
+	return &llm.Message{Role: llm.RoleUser, Content: content}
+}
+
+// joinBlocks trims each block and joins the non-empty ones with a newline.
+func joinBlocks(blocks []string) string {
+	out := make([]string, 0, len(blocks))
+	for _, b := range blocks {
+		if b = strings.TrimSpace(b); b != "" {
+			out = append(out, b)
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 // ConvertMCPToolsToLLMTools converts MCP tool descriptors to LLM tool definitions.
@@ -71,29 +107,12 @@ func ConvertMCPToolsToLLMTools(tools []mcps.ToolDescriptor) []llm.ToolDefinition
 	return result
 }
 
-// BuildSystemMessage constructs a system message from the tool registry and prompts.
-// Returns the system message and the resolved tool definitions.
-func BuildSystemMessage(ctx context.Context, toolreg *tools.Registry, sysPrompt, toolsPrompt string) (llm.Message, []llm.ToolDefinition) {
-	var sb strings.Builder
-
-	if sysPrompt == "" {
-		sysPrompt = DefaultSystemMsg
-	}
-	sb.WriteString(sysPrompt)
-
-	if settings.Current.DateInContext {
-		sb.WriteString("\n")
-		sb.WriteString(ThisMoment())
-	}
-
+// BuildSystemMessage resolves the tool registry against the prompt parts and
+// returns the stable system message and the resolved tool definitions. Callers
+// assemble [stable][history][activation][question].
+func BuildSystemMessage(ctx context.Context, toolreg *tools.Registry, parts SystemPromptParts) (llm.Message, []llm.ToolDefinition) {
 	toolDefs := ConvertMCPToolsToLLMTools(toolreg.ToolsFor(ctx))
-	if len(toolDefs) > 0 {
-		if toolsPrompt == "" {
-			toolsPrompt = DefaultToolsMsg
-		}
-		sb.WriteString("\n")
-		sb.WriteString(toolsPrompt)
-	}
+	parts = parts.Normalize(len(toolDefs) > 0)
 
-	return llm.Message{Role: llm.RoleSystem, Content: sb.String()}, toolDefs
+	return parts.StableMessage(), toolDefs
 }

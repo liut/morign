@@ -201,7 +201,10 @@ func agent(cc *cli.Context) error {
 	}
 
 	ctx := cc.Context
-	sysMsg, tools := svcagent.BuildSystemMessage(ctx, toolreg, preset.SystemPrompt, preset.ToolsPrompt)
+	sysMsg, tools := svcagent.BuildSystemMessage(ctx, toolreg, svcagent.SystemPromptParts{
+		Base:  preset.SystemPrompt,
+		Tools: preset.ToolsPrompt,
+	})
 	messages := []llm.Message{sysMsg, {Role: llm.RoleUser, Content: message}}
 
 	if stream {
@@ -232,7 +235,10 @@ func agent(cc *cli.Context) error {
 
 func runInteractive(ctx context.Context, loop *svcagent.AgentLoop, toolreg *tools.Registry, sysPrompt, toolsPrompt string, stream bool) error {
 	scanner := bufio.NewScanner(os.Stdin)
-	sysMsg, tools := svcagent.BuildSystemMessage(ctx, toolreg, sysPrompt, toolsPrompt)
+	sysMsg, tools := svcagent.BuildSystemMessage(ctx, toolreg, svcagent.SystemPromptParts{
+		Base:  sysPrompt,
+		Tools: toolsPrompt,
+	})
 	messages := []llm.Message{sysMsg}
 
 	fmt.Println("Agent REPL. Type /exit to quit.")

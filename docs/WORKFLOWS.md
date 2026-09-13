@@ -35,11 +35,12 @@ sequenceDiagram
 
     API->>Prep: prepareChatRequest(ctx, param)
     Prep->>Prep: prepareSystemMessage()
-    Note over Prep: 1. SystemPrompt<br/>2. DateInContext<br/>3. SessionID<br/>4. User Info + Memories<br/>5. Tools / KB Docs<br/>6. Channel Prompt
+    Note over Prep: 稳定 system: SystemPrompt + ToolsPrompt + ChannelPrompt + 记忆引导 + 技能索引
+    Note over Prep: 常驻数据（时间/身份/记忆/知识库）不进 prompt，经工具按需获取
 
     Prep->>DB: ListHistory(sessionID)
     DB-->>Prep: 历史消息
-    Prep->>Prep: 构建 messages[] (sys + history + user)
+    Prep->>Prep: 构建 messages[] (sys + history + 显式激活 + user)
     Prep-->>API: chatRequest{messages, tools, cs}
 
     alt 流式 (SSE)
@@ -152,7 +153,7 @@ flowchart TD
     E --> F[LoadServers<br/>加载活跃的 MCP Server]
     F --> G[NewAgent]
     G --> H{BuildSystemMessage}
-    H --> I["system prompt + 时间上下文 + tools"]
+    H --> I["稳定 system prompt + tools<br/>无逐轮注入"]
 
     I --> J{交互模式?}
     J -->|是| K[REPL Loop]

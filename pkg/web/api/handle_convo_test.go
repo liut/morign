@@ -8,7 +8,6 @@ import (
 
 	"github.com/liut/morign/pkg/models/skills"
 	"github.com/liut/morign/pkg/services/llm"
-	"github.com/liut/morign/pkg/settings"
 )
 
 type fakeSkillStore struct {
@@ -164,28 +163,31 @@ func TestConvertToolCallsForJSON_Serialize(t *testing.T) {
 	}
 }
 
-func TestAppendSkillPromptDirect(t *testing.T) {
-	settings.Current.SkillDirectThreshold = 3
-	f := &fakeSkillStore{byName: map[string]*skills.Skill{
+func TestSkillIndexIsMetadataOnly(t *testing.T) {
+	sto := newFakePromptStore()
+	sto.skill = &fakeSkillStore{byName: map[string]*skills.Skill{
 		"a": skillFor("a", "A", "content-a"),
 		"b": skillFor("b", "B", "content-b"),
 	}}
-	var sb strings.Builder
-	appendSkillPrompt(context.Background(), &sb, f, []string{"a", "b"})
-	if !strings.Contains(sb.String(), "content-a") || !strings.Contains(sb.String(), "content-b") {
-		t.Errorf("expected full contents, got %q", sb.String())
+	got := skillIndex(context.Background(), sto, []string{"a", "b"})
+	for _, name := range []string{"a", "b"} {
+		if !strings.Contains(got, "- "+name+": ") {
+			t.Errorf("index missing %s, got %q", name, got)
+		}
+		if strings.Contains(got, "content-"+name) {
+			t.Errorf("index leaked skill body for %s, got %q", name, got)
+		}
 	}
 }
 
-func TestAppendSkillPromptMetadata(t *testing.T) {
-	settings.Current.SkillDirectThreshold = 3
+func TestSkillIndexManySkills(t *testing.T) {
 	f := &fakeSkillStore{byName: map[string]*skills.Skill{}}
 	for _, name := range []string{"a", "b", "c", "d", "e"} {
 		f.byName[name] = skillFor(name, "desc-"+name, "content-"+name)
 	}
-	var sb strings.Builder
-	appendSkillPrompt(context.Background(), &sb, f, []string{"a", "b", "c", "d", "e"})
-	out := sb.String()
+	sto := newFakePromptStore()
+	sto.skill = f
+	out := skillIndex(context.Background(), sto, []string{"a", "b", "c", "d", "e"})
 	if !strings.Contains(out, "desc-a") || strings.Contains(out, "content-a") {
 		t.Errorf("expected metadata only, got %q", out)
 	}
@@ -194,20 +196,19 @@ func TestAppendSkillPromptMetadata(t *testing.T) {
 	}
 }
 
-func TestAppendSkillPromptDegrade(t *testing.T) {
-	f := &fakeSkillStore{err: errFakeNotFound{}}
-	var sb strings.Builder
-	appendSkillPrompt(context.Background(), &sb, f, []string{"a"})
-	if sb.String() != "" {
-		t.Errorf("store error should degrade to empty, got %q", sb.String())
+func TestSkillIndexDegrade(t *testing.T) {
+	sto := newFakePromptStore()
+	sto.skill = &fakeSkillStore{err: errFakeNotFound{}}
+	if got := skillIndex(context.Background(), sto, []string{"a"}); got != "" {
+		t.Errorf("store error should degrade to empty, got %q", got)
 	}
 }
 
-func TestAppendSkillPromptEmpty(t *testing.T) {
-	var sb strings.Builder
-	appendSkillPrompt(context.Background(), &sb, &fakeSkillStore{}, nil)
-	if sb.String() != "" {
-		t.Errorf("no skills should inject nothing, got %q", sb.String())
+func TestSkillIndexEmpty(t *testing.T) {
+	sto := newFakePromptStore()
+	sto.skill = &fakeSkillStore{}
+	if got := skillIndex(context.Background(), sto, nil); got != "" {
+		t.Errorf("no skills should inject nothing, got %q", got)
 	}
 }
 

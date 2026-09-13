@@ -159,7 +159,7 @@ flowchart LR
     CTX2 --> |"检查 Keeper role"| CTX3[Context: token + User + Keeper]
     CTX3 --> HANDLER[Handler]
 
-    HANDLER --> |prepareSystemMessage| SYS[读取 User Info + Memories]
+    HANDLER --> |prepareSystemMessage| SYS[稳定 system: preset + 工具说明 + 频道说明 + 记忆引导 + 技能索引]
     HANDLER --> |ToolsFor| TOOLS[根据 Keeper 角色返回工具集]
     HANDLER --> |ExecuteToolCalls| INVOKE[Memory 操作需验证 User]
 ```

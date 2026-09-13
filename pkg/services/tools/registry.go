@@ -173,6 +173,10 @@ func (r *Registry) initTools(sto stores.Storage) {
 	r.tools = append(r.tools, fetchDescriptor)
 	r.invokers[ToolNameFetch] = r.callFetch
 
+	// 公开工具：CurrentTime
+	r.tools = append(r.tools, currentTimeDescriptor)
+	r.invokers[ToolNameCurrentTime] = invokeCurrentTime
+
 	logger().Debug("init tools", "tools", mcps.ToolNames(r.tools), "priv", len(r.privTools))
 }
 
