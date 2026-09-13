@@ -147,7 +147,8 @@ func SgtDB(args ...string) *pgx.DB {
 		var err error
 		dbX, err = pgx.Open(dsn, tscfg, settings.Current.PgQueryDebug)
 		if err != nil {
-			logger().Panicw("connect to database fail", "err", err)
+			logger().Error("connect to database fail", "err", err)
+			panic(err)
 		}
 	})
 	return dbX
@@ -172,12 +173,12 @@ func InitDB(ctx context.Context) error {
 	defer cancel()
 	db := SgtDB()
 	if err := db.InitSchemas(ctx, false); err != nil {
-		logger().Errorw("InitSchemas fail", "err", err)
+		logger().Error("InitSchemas fail", "err", err)
 		return err
 	}
 
 	if err := db.RunMigrations(ctx); err != nil {
-		logger().Errorw("RunMigrations fail", "err", err)
+		logger().Error("RunMigrations fail", "err", err)
 		return err
 	}
 

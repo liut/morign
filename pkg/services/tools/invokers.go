@@ -51,7 +51,7 @@ func (r *Registry) callFetch(ctx context.Context, args map[string]any) (map[stri
 	// Fetch URL
 	content, prefix, err := fetchURL(ctx, urlStr, DEFAULT_USER_AGENT_AUTONOMOUS, raw)
 	if err != nil {
-		logger().Infow("fetch", "url", urlStr, "err", err)
+		logger().Info("fetch", "url", urlStr, "err", err)
 		return mcps.BuildToolSuccessResult(err.Error()), nil
 	}
 
@@ -74,7 +74,7 @@ func (r *Registry) callFetch(ctx context.Context, args map[string]any) (map[stri
 			}
 		}
 	}
-	logger().Debugw("fetched", "url", urlStr, "content", content, "prefix", prefix)
+	logger().Debug("fetched", "url", urlStr, "content", content, "prefix", prefix)
 
 	return mcps.BuildToolSuccessResult(fmt.Sprintf("%s\nContents of %s:\n%s", prefix, urlStr, content)), nil
 }
@@ -105,7 +105,7 @@ func extractContentFromHTML(htmlContent, uri string) string {
 
 	markdown, err := converter.ConvertString(textContent)
 	if err != nil {
-		logger().Infow("failed to convert HTML to markdown", "err", err)
+		logger().Info("failed to convert HTML to markdown", "err", err)
 		return "<error>Failed to convert HTML to markdown</error>"
 	}
 

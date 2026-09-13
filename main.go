@@ -13,9 +13,6 @@ import (
 	"syscall"
 
 	"github.com/urfave/cli/v2"
-	"go.uber.org/zap"
-
-	"github.com/cupogo/andvari/utils/zlog"
 
 	"github.com/liut/morign/htdocs"
 	svcagent "github.com/liut/morign/pkg/services/agent"
@@ -44,7 +41,7 @@ func importDocs(cc *cli.Context) error {
 	input := cc.Args().First()
 	file, err := os.Open(input)
 	if err != nil {
-		logger().Warnw("open fail", "input", input, "err", err)
+		logger().Warn("open fail", "input", input, "err", err)
 		return err
 	}
 	defer func() { _ = file.Close() }()
@@ -53,7 +50,7 @@ func importDocs(cc *cli.Context) error {
 	if len(difflog) > 0 {
 		lw, err = os.Create(difflog)
 		if err != nil {
-			logger().Warnw("create fail", "difflog", difflog, "err", err)
+			logger().Warn("create fail", "difflog", difflog, "err", err)
 			return err
 		}
 		defer func() { _ = lw.Close() }()
@@ -62,7 +59,7 @@ func importDocs(cc *cli.Context) error {
 	}
 	err = stores.Sgt().Corpus().ImportDocs(cc.Context, file, lw)
 	if err != nil {
-		logger().Warnw("import fail", "input", input, "err", err)
+		logger().Warn("import fail", "input", input, "err", err)
 		return err
 	}
 	return nil
@@ -76,7 +73,7 @@ func importSwagger(cc *cli.Context) error {
 
 	file, err := os.Open(input)
 	if err != nil {
-		logger().Warnw("open fail", "input", input, "err", err)
+		logger().Warn("open fail", "input", input, "err", err)
 		return err
 	}
 	defer func() { _ = file.Close() }()
@@ -86,7 +83,7 @@ func importSwagger(cc *cli.Context) error {
 	if len(difflog) > 0 {
 		lw, err = os.Create(difflog)
 		if err != nil {
-			logger().Warnw("create fail", "difflog", difflog, "err", err)
+			logger().Warn("create fail", "difflog", difflog, "err", err)
 			return err
 		}
 		defer func() { _ = lw.Close() }()
@@ -96,7 +93,7 @@ func importSwagger(cc *cli.Context) error {
 
 	err = stores.Sgt().Capability().ImportCapabilities(cc.Context, file, lw, cc.String("mark-missing"))
 	if err != nil {
-		logger().Warnw("import swagger fail", "input", input, "err", err)
+		logger().Warn("import swagger fail", "input", input, "err", err)
 		return err
 	}
 	return nil
@@ -106,7 +103,7 @@ func exportDocs(cc *cli.Context) error {
 	output := cc.Args().First() // csv
 	file, err := os.OpenFile(output, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
-		logger().Warnw("open fail", "output", output, "err", err)
+		logger().Warn("open fail", "output", output, "err", err)
 		return err
 	}
 	defer func() { _ = file.Close() }()
@@ -129,7 +126,7 @@ func cleanupMissed(cc *cli.Context) error {
 	lw := os.Stdout
 	err := stores.Sgt().Capability().CleanupMissedCapabilities(ctx, lw, prefix, dryRun)
 	if err != nil {
-		logger().Warnw("cleanup missed fail", "err", err)
+		logger().Warn("cleanup missed fail", "err", err)
 		return err
 	}
 	return nil
@@ -167,10 +164,7 @@ func agent(cc *cli.Context) error {
 	interactive := cc.Bool("interactive")
 
 	if !verbose {
-		cfg := zap.NewProductionConfig()
-		cfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
-		zlogger, _ := cfg.Build()
-		zlog.Set(zlogger.Sugar())
+		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
 	}
 
 	if !interactive && message == "" {
@@ -193,7 +187,7 @@ func agent(cc *cli.Context) error {
 	toolreg.ApplyToolDescriptions(preset.Tools)
 
 	if err := toolreg.LoadServers(cc.Context, stores.Sgt()); err != nil {
-		logger().Warnw("load MCP servers fail", "err", err)
+		logger().Warn("load MCP servers fail", "err", err)
 	}
 
 	toolExec := svcagent.NewToolExecutor(toolreg)
@@ -288,20 +282,19 @@ func runInteractive(ctx context.Context, loop *svcagent.AgentLoop, toolreg *tool
 	return scanner.Err()
 }
 
-func logger() zlog.Logger {
-	return zlog.Get()
-}
+func logger() *slog.Logger { return slog.Default() }
 
 func main() {
-
-	var zlogger *zap.Logger
 	if settings.InDevelop() {
-		zlogger, _ = zap.NewDevelopment()
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+			Level:     slog.LevelDebug,
+			AddSource: true,
+		})))
 	} else {
-		zlogger, _ = zap.NewProduction()
+		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+			AddSource: true,
+		})))
 	}
-	sugar := zlogger.Sugar()
-	zlog.Set(sugar)
 
 	app := &cli.App{
 		Usage:                  "A Backend for OpenAI/ChatGPT",
@@ -389,7 +382,7 @@ func main() {
 				Name: "version", Aliases: []string{"ver"},
 				Usage: "show build version",
 				Action: func(ctx *cli.Context) error {
-					sugar.Infow("", "version", settings.Version(), "runtime", runtime.Version())
+					logger().Info("", "version", settings.Version(), "runtime", runtime.Version())
 					return nil
 				},
 			},
@@ -400,7 +393,8 @@ func main() {
 	// 	return
 	// }
 	if err := app.Run(os.Args); err != nil {
-		logger().Fatalw("app run fail", "err", err)
+		logger().Error("app run fail", "err", err)
+		os.Exit(1)
 	}
 }
 
@@ -430,7 +424,7 @@ func webRun(cc *cli.Context) error {
 		logger().Info("shuting down server...")
 		cancel()
 		if err := srv.Stop(ctx); err != nil {
-			logger().Infow("server shutdown:", "err", err)
+			logger().Info("server shutdown:", "err", err)
 		}
 	}()
 

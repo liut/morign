@@ -131,7 +131,7 @@ func (chh *channelHandler) MessageHandler(p channel.Channel, msg *channel.Messag
 	ctx := context.Background()
 	user, err := chh.sto.Convo().GetUserWith(ctx, msg.UserID)
 	if err == nil {
-		logger().Debugw("found user", "id", user.ID, "userID", msg.UserID)
+		logger().Debug("found user", "id", user.ID, "userID", msg.UserID)
 		ctx = ContextWithUser(ctx, user)
 		if token, err := stores.LoadTokenWithUser(ctx, user.StringID()); err == nil {
 			ctx = stores.OAuthContextWithToken(ctx, token)
@@ -139,17 +139,17 @@ func (chh *channelHandler) MessageHandler(p channel.Channel, msg *channel.Messag
 			// Fallback: 从 aurora 获取 token 并缓存
 			ttl := time.Duration(exp) * time.Second
 			if ttl <= 0 {
-				logger().Warnw("token fallback: invalid expiresIn, using default", "userID", user.StringID(), "expiresIn", exp)
+				logger().Warn("token fallback: invalid expiresIn, using default", "userID", user.StringID(), "expiresIn", exp)
 				ttl = stores.TokenExpire
 			}
 			_ = stores.SaveTokenWithExpiry(ctx, user.StringID(), tok, ttl)
 			ctx = stores.OAuthContextWithToken(ctx, tok)
-			logger().Infow("token fallback from aurora", "userID", user.StringID())
+			logger().Info("token fallback from aurora", "userID", user.StringID())
 		} else {
-			logger().Warnw("token fallback failed", "userID", user.StringID(), "err", ferr)
+			logger().Warn("token fallback failed", "userID", user.StringID(), "err", ferr)
 		}
 	} else {
-		logger().Infow("not found user", "userID", msg.UserID, "err", err)
+		logger().Info("not found user", "userID", msg.UserID, "err", err)
 	}
 
 	ctx = mcps.ContextWithChannel(ctx, p.Name())
@@ -163,12 +163,12 @@ func (chh *channelHandler) MessageHandler(p channel.Channel, msg *channel.Messag
 				replyMsg = "指令执行失败，请重试"
 			}
 			if err := p.Reply(ctx, msg.ReplyCtx, replyMsg); err != nil {
-				logger().Warnw("reply after command failed", "err", err)
+				logger().Warn("reply after command failed", "err", err)
 			}
 			return
 		}
 		if err != nil {
-			logger().Warnw("command execution failed", "cmd", cmd.Name, "err", err)
+			logger().Warn("command execution failed", "cmd", cmd.Name, "err", err)
 		}
 	}
 

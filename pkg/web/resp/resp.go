@@ -40,7 +40,7 @@ func Fail(w http.ResponseWriter, r *http.Request, code int, args ...any) {
 	}
 	res := &Failure{Time: getTime()}
 	er := GetError(r, code, args[0], args[1:]...)
-	logger().Infow("request fail", "code", code, "args", args,
+	logger().Info("request fail", "code", code, "args", args,
 		"er", er, r.Method, r.RequestURI)
 
 	res.Code = er.Code

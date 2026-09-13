@@ -89,11 +89,11 @@ func prepareSystemMessage(ctx context.Context, sto stores.Storage,
 		momories, _, err := sto.Convo().ListMemory(ctx, &stores.ConvoMemorySpec{IsOwner: true})
 		if err == nil {
 			mtext := momories.PrettyTextForOwner()
-			logger().Debugw("load memories", "keys", momories.Keys(), "text", words.TakeTail(mtext, 10, ".."))
+			logger().Debug("load memories", "keys", momories.Keys(), "text", words.TakeTail(mtext, 10, ".."))
 			sb.WriteString("\n")
 			sb.WriteString(mtext)
 		} else {
-			logger().Infow("ListMemory fail", "err", err)
+			logger().Info("ListMemory fail", "err", err)
 		}
 	}
 
@@ -113,7 +113,7 @@ func prepareSystemMessage(ctx context.Context, sto stores.Storage,
 			Limit: 5,
 		})
 		if err == nil {
-			logger().Infow("matches", "docs", len(docs), "prompt", prompt)
+			logger().Info("matches", "docs", len(docs), "prompt", prompt)
 			content := docs.MarkdownText()
 			if len(docs) == 0 {
 				content += "\nPlease honestly state that you don't know rather than making up an answer."
@@ -121,7 +121,7 @@ func prepareSystemMessage(ctx context.Context, sto stores.Storage,
 			sb.WriteString("\n")
 			sb.WriteString(content)
 		} else {
-			logger().Warnw("match fail", "err", err)
+			logger().Warn("match fail", "err", err)
 			sb.WriteString("\n知识库查询服务暂时不可用，请稍后再试或联系管理员。")
 		}
 	}
@@ -145,7 +145,7 @@ func prepareSystemMessage(ctx context.Context, sto stores.Storage,
 func appendSkillPrompt(ctx context.Context, sb *strings.Builder, sk agent.SkillStore, requested []string) {
 	block, err := agent.BuildSkillPrompt(ctx, sk, requested)
 	if err != nil {
-		logger().Warnw("skill prompt fail", "err", err)
+		logger().Warn("skill prompt fail", "err", err)
 		return
 	}
 	if block != "" {
@@ -161,7 +161,7 @@ func (a *api) prepareChatRequest(ctx context.Context, param *ChatRequest) *chatR
 
 	data, err := cs.ListHistory(ctx)
 	if err == nil && len(data) > 0 {
-		logger().Infow("found history", "size", len(data), "hist", aigc.HiLogged(data))
+		logger().Info("found history", "size", len(data), "hist", aigc.HiLogged(data))
 		data = data.RecentlyWithTokens(historyLimitToken)
 
 		for i, hi := range data {
@@ -171,7 +171,7 @@ func (a *api) prepareChatRequest(ctx context.Context, param *ChatRequest) *chatR
 
 				// 最后一条特殊处理：如果是重试或 Regenerate，完全跳过这一条历史
 				if isLast && (isRetry || param.Regenerate) {
-					logger().Debugw("skip last history", "retry", isRetry, "regenerate", param.Regenerate)
+					logger().Debug("skip last history", "retry", isRetry, "regenerate", param.Regenerate)
 					break
 				}
 
@@ -231,7 +231,7 @@ func (a *api) postChat(w http.ResponseWriter, r *http.Request) {
 		MaxLoop:  settings.Current.MaxLoopIterations,
 	})
 
-	logger().Infow("chat", "csid", param.GetConversionID(), "msgs", len(ccr.messages), "prompt", param.Prompt, "ip", r.RemoteAddr)
+	logger().Info("chat", "csid", param.GetConversionID(), "msgs", len(ccr.messages), "prompt", param.Prompt, "ip", r.RemoteAddr)
 
 	if isStream {
 		a.handleSSEStream(w, r, loop, ccr)
@@ -243,7 +243,7 @@ func (a *api) postChat(w http.ResponseWriter, r *http.Request) {
 		apiFail(w, r, 500, err)
 		return
 	}
-	logger().Infow("chat", "answer", answer)
+	logger().Info("chat", "answer", answer)
 
 	var cm ChatMessage
 	cm.Text = answer
@@ -259,7 +259,7 @@ func writeEvent(w io.Writer, id string, m any) bool {
 	} else {
 		b, err = json.Marshal(m)
 		if err != nil {
-			logger().Infow("json marshal fail", "m", m, "err", err)
+			logger().Info("json marshal fail", "m", m, "err", err)
 			return false
 		}
 	}
@@ -268,7 +268,7 @@ func writeEvent(w io.Writer, id string, m any) bool {
 		ID:   id,
 		Data: b,
 	}); err != nil {
-		logger().Infow("eventsource write fail", "err", err)
+		logger().Info("eventsource write fail", "err", err)
 		return false
 	}
 	if flusher, ok := w.(http.Flusher); ok {
@@ -303,7 +303,7 @@ func (a *api) handleSSEStream(w http.ResponseWriter, r *http.Request, loop *agen
 
 	for event, err := range loop.Run(cctx, ccr.messages, ccr.tools) {
 		if err != nil {
-			logger().Infow("agent loop error", "err", err)
+			logger().Info("agent loop error", "err", err)
 			break
 		}
 
@@ -349,7 +349,7 @@ func (a *api) handleSSEStream(w http.ResponseWriter, r *http.Request, loop *agen
 					MsgCount: len(ccr.messages),
 					Meta:     meta,
 				}); err != nil {
-					logger().Infow("persist usage fail", "err", err)
+					logger().Info("persist usage fail", "err", err)
 				}
 			}
 
@@ -367,7 +367,7 @@ func (a *api) handleSSEStream(w http.ResponseWriter, r *http.Request, loop *agen
 		lastWriteEmpty = isEmpty
 	}
 
-	logger().Infow("stream response", "answer_len", len(answer), "finish", finish)
+	logger().Info("stream response", "answer_len", len(answer), "finish", finish)
 
 	if len(answer) > 0 {
 		if err := a.rnr.Persist(r.Context(), ccr.cs.GetID(), &llm.Event{
@@ -376,7 +376,7 @@ func (a *api) handleSSEStream(w http.ResponseWriter, r *http.Request, loop *agen
 			Think:      think,
 			UserPrompt: ccr.prompt,
 		}); err != nil {
-			logger().Infow("persist fail", "err", err)
+			logger().Info("persist fail", "err", err)
 		}
 	}
 
@@ -393,7 +393,7 @@ func (a *api) handleSSEStream(w http.ResponseWriter, r *http.Request, loop *agen
 		}
 		_, err := stores.Sgt().Corpus().CreateChatLog(r.Context(), in)
 		if err != nil {
-			logger().Infow("save chat log fail", "err", err)
+			logger().Info("save chat log fail", "err", err)
 		}
 	}
 

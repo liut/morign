@@ -35,7 +35,7 @@ Morign 是一个 AI 聊天后端，集知识库问答、MCP 工具与 OAuth 认�
 - 无需用注释解释显而易见的内容
 - 使用自解释的变量和函数名
 - 上下文清晰时使用短变量名
-- 日志使用 `logger().Infow()` 或 `logger().Warnw()`
+- 日志基于 `log/slog`，使用 `logger().Info()` 或 `logger().Warn()`
 - 修改结构体时注意 JSON tag 命名一致
 
 

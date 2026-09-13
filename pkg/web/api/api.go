@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -87,19 +88,20 @@ func newapi(sto stores.Storage) *api {
 		}
 		sb.HeaderFunc = stores.HeaderFuncFor(sb.HeaderCate)
 		if err := toolreg.AddServer(context.Background(), &sb); err != nil {
-			logger().Infow("add strata mcp server fail", "err", err)
+			logger().Info("add strata mcp server fail", "err", err)
 		}
 	}
 
 	// 加载已激活的 MCP Servers
 	if err := toolreg.LoadServers(context.Background(), sto); err != nil {
-		logger().Warnw("failed to load MCP servers", "err", err)
+		logger().Warn("failed to load MCP servers", "err", err)
 	}
 
 	// load LLM Client with interact config
 	llmClient, err := stores.NewLLMClient(&settings.Current.Interact)
 	if err != nil {
-		logger().Fatalw("create llm interact client failed", "err", err)
+		logger().Error("create llm interact client failed", "err", err)
+		os.Exit(1)
 	}
 	return &api{
 		sto:      sto,
@@ -124,7 +126,7 @@ func (a *api) Strap(router chi.Router) {
 		}
 		sb.HeaderFunc = stores.HeaderFuncFor(sb.HeaderCate)
 		if err := a.toolreg.AddServer(context.Background(), &sb); err != nil {
-			logger().Infow("add oauth mcp server fail", "err", err)
+			logger().Info("add oauth mcp server fail", "err", err)
 		}
 	}
 
@@ -143,19 +145,21 @@ func (a *api) Strap(router chi.Router) {
 	// 限流器初始化
 	rate, err := limiter.NewRateFromFormatted(settings.Current.AskRateLimit)
 	if err != nil {
-		logger().Fatalw("settings failed", "err", err)
+		logger().Error("settings failed", "err", err)
+		os.Exit(1)
 	}
 	store, err := limitRedis.NewStoreWithOptions(stores.SgtRC(), limiter.StoreOptions{
 		Prefix: "chat-lr-",
 	})
 	if err != nil {
-		logger().Fatalw("limiter with redis option failed", "err", err)
+		logger().Error("limiter with redis option failed", "err", err)
+		os.Exit(1)
 	}
 	replLK := strings.NewReplacer("/", "")
 	instance := limiter.New(store, rate)
 	middleware := stdlib.NewMiddleware(instance,
 		stdlib.WithErrorHandler(func(w http.ResponseWriter, r *http.Request, err error) {
-			logger().Warnw("failed on", "uri", r.RequestURI, "err", err)
+			logger().Warn("failed on", "uri", r.RequestURI, "err", err)
 		}),
 		stdlib.WithKeyGetter(func(r *http.Request) string {
 			return fmt.Sprintf("%s:%s",
@@ -192,7 +196,7 @@ func (a *api) Strap(router chi.Router) {
 
 	// 初始化平台适配器（HTTP webhook 回调等）
 	if err := InitChannels(router, &a.preset, a.sto, a.llm, a.toolreg); err != nil {
-		logger().Warnw("init channels failed", "err", err)
+		logger().Warn("init channels failed", "err", err)
 	}
 
 }
@@ -203,7 +207,7 @@ func (a *api) authPerm(permID string) func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !stores.IsKeeper(r.Context()) {
 				w.WriteHeader(403)
-				logger().Infow("no permission", "id", permID,
+				logger().Info("no permission", "id", permID,
 					"method", r.Method, "uri", r.RequestURI)
 				return
 			}

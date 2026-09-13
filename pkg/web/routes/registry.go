@@ -49,13 +49,13 @@ func Routers(r any, names ...string) {
 			sort.Strings(keys)
 		}
 
-		logger().Infow("Routers", "names", keys)
+		logger().Info("Routers", "names", keys)
 		for _, name := range keys {
 			if sf, ok := straps[name]; ok {
-				logger().Infow("start router for ", "name", name)
+				logger().Info("start router for ", "name", name)
 				sf.Strap(r)
 			} else {
-				logger().Warnw("strap not found", "name", name)
+				logger().Warn("strap not found", "name", name)
 			}
 		}
 	})

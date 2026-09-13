@@ -89,17 +89,17 @@ func (a *api) handleTokenGot(ctx context.Context, w http.ResponseWriter, it *sta
 	// TODO: use it.AccessToken directly
 	ot := staffio.TokenFromContext(ctx)
 	if ot != nil {
-		logger().Infow("got o2 token", "it", it, "ot", ot)
+		logger().Info("got o2 token", "it", it, "ot", ot)
 		http.SetCookie(w, buildTokenCookie(ot.AccessToken))
 	} else {
-		logger().Infow("got info token", "it", it)
+		logger().Info("got info token", "it", it)
 	}
 	// http.SetCookie(w, buildTokenCookie(it.AccessToken))
 
 	if user, uok := it.GetUser(); uok {
 		a.storeUserWith(ctx, user, it.Meta, it.AccessToken)
 		if err := stores.SaveUserWithToken(ctx, user, it.AccessToken); err != nil {
-			logger().Infow("save user to redis failed", "error", err, "uid", user.UID)
+			logger().Info("save user to redis failed", "error", err, "uid", user.UID)
 		}
 	}
 }
@@ -192,7 +192,7 @@ func (or *oRes) getUser() *O2User {
 // syncUserToCache syncs user to db and saves to Redis, then signs in
 func (a *api) syncUserToCache(ctx context.Context, user *O2User, token string, w http.ResponseWriter) {
 	if err := stores.SaveUserWithToken(ctx, user, token); err != nil {
-		logger().Infow("save user to redis failed", "error", err, "uid", user.UID)
+		logger().Info("save user to redis failed", "error", err, "uid", user.UID)
 	}
 	user.Refresh()
 	staffio.Signin(user, w)
@@ -240,7 +240,7 @@ func (a *api) handleSession(w http.ResponseWriter, r *http.Request) {
 		user, err = staffio.UserFromRequest(r)
 	}
 
-	logger().Debugw("handle session", "user", user, "err", err, "siteToken", siteToken)
+	logger().Debug("handle session", "user", user, "err", err, "siteToken", siteToken)
 
 	if err == nil {
 		fillUserResponse(&res, user, accessToken)
@@ -283,13 +283,13 @@ func (a *api) trySyncOAuthUser(ctx context.Context, accessToken, siteToken strin
 				return user
 			}
 		}
-		logger().Infow("request infn fail", "err", err, "token", accessToken)
+		logger().Info("request infn fail", "err", err, "token", accessToken)
 	}
 
 	// Try custom OAuth me endpoint (uses siteToken from header)
 	uriMe := settings.Current.SitePathMe
 	if uriMe == "" || siteToken == "" {
-		logger().Infow("empty uri or token", "uriMe", uriMe, "token", siteToken)
+		logger().Info("empty uri or token", "uriMe", uriMe, "token", siteToken)
 		return nil
 	}
 	uriMe = staffio.FixURI(staffio.GetPrefix(), uriMe)
@@ -299,14 +299,14 @@ func (a *api) trySyncOAuthUser(ctx context.Context, accessToken, siteToken strin
 		AccessToken: siteToken,
 		TokenType:   "Bearer",
 	}, &ores); err != nil {
-		logger().Infow("request oauth me fail", "err", err, "uri", uriMe)
+		logger().Info("request oauth me fail", "err", err, "uri", uriMe)
 		return nil
 	}
 	if ores.Status > 0 {
-		logger().Infow("got account fail", "ores", &ores)
+		logger().Info("got account fail", "ores", &ores)
 		return nil
 	}
-	logger().Infow("got account ok", "acc", ores.Result)
+	logger().Info("got account ok", "acc", ores.Result)
 
 	if user := ores.getUser(); user != nil {
 		a.storeUserWith(ctx, user, ores.Result.Meta, siteToken)

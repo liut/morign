@@ -65,12 +65,12 @@ func (s *convoStore) GetUserWith(ctx context.Context, uid string) (*ConvoUser, e
 			Where("meta->>'wecomUID' = ?", uid).Limit(1).
 			Scan(ctx)
 		if err == nil {
-			logger().Infow("got user with mismatch uid", "uid", uid, "name", user.Username)
+			logger().Info("got user with mismatch uid", "uid", uid, "name", user.Username)
 			return user, nil
 		}
 	}
 
-	logger().Infow("get user fail", "uid", uid, "err", err)
+	logger().Info("get user fail", "uid", uid, "err", err)
 
 	return nil, err
 }
@@ -90,7 +90,7 @@ func (s *convoStore) SaveUser(ctx context.Context, in convo.UserBasic, id string
 		}
 		up.MetaDiff = in.MetaDiff
 		if err = s.UpdateUser(ctx, existing.StringID(), up); err != nil {
-			logger().Infow("update user fail", "err", err, "id", existing.ID)
+			logger().Info("update user fail", "err", err, "id", existing.ID)
 			return err
 		}
 		return nil
@@ -100,9 +100,9 @@ func (s *convoStore) SaveUser(ctx context.Context, in convo.UserBasic, id string
 		in.MetaAddKVs("oid", id)
 		var obj *ConvoUser
 		if obj, err = s.CreateUser(ctx, in); err != nil {
-			logger().Infow("create user fail", "err", err)
+			logger().Info("create user fail", "err", err)
 		} else {
-			logger().Infow("create user ok", "id", obj.ID, "input.id", id)
+			logger().Info("create user ok", "id", obj.ID, "input.id", id)
 		}
 	}
 
@@ -139,12 +139,12 @@ func (s *convoStore) SyncUserFromOAuth(ctx context.Context, user IUser) error {
 		Phone:      user.GetPhone(),
 	}
 	if wuid := WecomUIDFromContext(ctx); len(wuid) > 0 {
-		logger().Infow("got wecomUID", "uid", wuid)
+		logger().Info("got wecomUID", "uid", wuid)
 		cub.MetaAddKVs(WecomUID, wuid)
 	}
 	id := user.GetOID()
 	if err := s.SaveUser(ctx, cub, id); err != nil {
-		logger().Infow("save user failed", "err", err,
+		logger().Info("save user failed", "err", err,
 			"oid", id, "uid", user.GetUID())
 		return err
 	}
@@ -185,7 +185,7 @@ func (s *convoStore) afterCreatedMemory(ctx context.Context, obj *convo.Memory) 
 
 	_, err = s.w.Corpus().CreateDocVector(ctx, dvb)
 	if err != nil {
-		logger().Infow("create memory vector fail", "dvb", &dvb, "err", err)
+		logger().Info("create memory vector fail", "dvb", &dvb, "err", err)
 		return err
 	}
 	return nil
@@ -198,7 +198,7 @@ func (spec *ConvoMemorySpec) SiftX(ctx context.Context, q *ormQuery) *ormQuery {
 	if spec.IsOwner {
 		user, uok := UserFromContext(ctx)
 		if !uok {
-			logger().Infow("need login when query owner memories")
+			logger().Info("need login when query owner memories")
 			return q.Where("FALSE")
 		}
 		spec.OwnerID = user.OID
@@ -229,7 +229,7 @@ func (s *convoStore) MatchMemories(ctx context.Context, ms MatchSpec) (data conv
 	// Get embedding for the query
 	vec, err := GetEmbedding(ctx, ms.Query)
 	if err != nil {
-		logger().Infow("GetEmbedding fail", "err", err)
+		logger().Info("GetEmbedding fail", "err", err)
 		return
 	}
 
@@ -237,17 +237,17 @@ func (s *convoStore) MatchMemories(ctx context.Context, ms MatchSpec) (data conv
 	var ps corpus.DocMatches
 	ps, err = s.w.Corpus().MatchVectorWith(ctx, vec, ms.Threshold, ms.Limit)
 	if err != nil || len(ps) == 0 {
-		logger().Infow("no match memories", "query", ms.Query)
+		logger().Info("no match memories", "query", ms.Query)
 		return
 	}
 
-	logger().Infow("matched memories", "count", len(ps))
+	logger().Info("matched memories", "count", len(ps))
 
 	// Load decay metadata for composite re-ranking
 	memoryIDs := ps.DocumentIDs()
 	decayMetas, loadErr := s.loadDecayMetas(ctx, memoryIDs)
 	if loadErr != nil {
-		logger().Infow("load decay metas fail", "err", loadErr)
+		logger().Info("load decay metas fail", "err", loadErr)
 	}
 
 	if len(decayMetas) > 0 {
@@ -294,7 +294,7 @@ func (s *convoStore) MatchMemories(ctx context.Context, ms MatchSpec) (data conv
 		err = queryList(ctx, s.w.db, spec, &data).Scan(ctx)
 	}
 	if err != nil {
-		logger().Infow("list memories fail", "err", err)
+		logger().Info("list memories fail", "err", err)
 	}
 	return
 }
@@ -374,7 +374,7 @@ func (s *convoStore) InvokerForMemoryList() mcps.Invoker {
 			return mcps.BuildToolErrorResult(err.Error()), nil
 		}
 
-		logger().Debugw("invoke memory list", "args", args, "ic", includeContent)
+		logger().Debug("invoke memory list", "args", args, "ic", includeContent)
 
 		var results []map[string]any
 		for _, m := range data {
@@ -535,7 +535,7 @@ func (s *convoStore) InvokerForMemoryForget() mcps.Invoker {
 		// Clean up vector entry
 		if _, err := s.w.db.NewDelete().Model((*corpus.DocVector)(nil)).
 			Where("doc_id = ?", existing.ID).Exec(ctx); err != nil {
-			logger().Infow("delete memory vector fail", "id", existing.ID, "err", err)
+			logger().Info("delete memory vector fail", "id", existing.ID, "err", err)
 		}
 
 		if err := s.DeleteMemory(ctx, existing.StringID()); err != nil {
@@ -561,7 +561,7 @@ func (s *convoStore) loadDecayMetas(ctx context.Context, ids oid.OIDs) ([]convo.
 		Where("id IN (?)", pgList(ids)).
 		Scan(ctx, &metas)
 	if err != nil {
-		logger().Infow("load decay metas fail", "err", err, "ids", ids)
+		logger().Info("load decay metas fail", "err", err, "ids", ids)
 		return nil, err
 	}
 	return metas, nil
@@ -590,6 +590,6 @@ func (s *convoStore) reinforceMemory(ctx context.Context, m convo.Memory) {
 	m.SetWith(ms)
 	dbMetaUp(ctx, s.w.db, &m)
 	if err := dbUpdate(ctx, s.w.db, &m); err != nil {
-		logger().Infow("reinforce memory fail", "id", m.ID, "err", err)
+		logger().Info("reinforce memory fail", "id", m.ID, "err", err)
 	}
 }

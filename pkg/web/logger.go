@@ -1,9 +1,5 @@
 package web
 
-import (
-	"github.com/cupogo/andvari/utils/zlog"
-)
+import "log/slog"
 
-func logger() zlog.Logger {
-	return zlog.Get()
-}
+func logger() *slog.Logger { return slog.Default() }

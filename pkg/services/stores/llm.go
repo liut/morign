@@ -3,6 +3,7 @@ package stores
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -50,20 +51,22 @@ func initRerankClient() {
 		llm.WithTemperature(0), // 重排需要确定性输出
 	)
 	if err != nil {
-		logger().Fatalw("create rerank llm client failed", "err", err)
+		logger().Error("create rerank llm client failed", "err", err)
+		os.Exit(1)
 	}
 }
 
 func initLLMClient(name string, p *settings.Provider, target *llm.Client) {
 	if p.APIKey == "" && p.URL == "" {
-		logger().Errorw("provider config invalid: API_KEY and URL cannot both be empty", "provider", name)
+		logger().Error("provider config invalid: API_KEY and URL cannot both be empty", "provider", name)
 		return
 	}
 
 	var err error
 	*target, err = NewLLMClient(p)
 	if err != nil {
-		logger().Fatalw("create llm client failed", "provider", name, "err", err)
+		logger().Error("create llm client failed", "provider", name, "err", err)
+		os.Exit(1)
 	}
 }
 
@@ -114,14 +117,14 @@ func GetSummary(ctx context.Context, text, tpl string) (summary string, err erro
 	prompt := fmt.Sprintf(tpl, text)
 	result, _, err := GetLLMSummarizeClient().Generate(ctx, prompt)
 	if err != nil {
-		logger().Infow("summarize fail", "tpl", tpl, "text", text, "err", err)
+		logger().Info("summarize fail", "tpl", tpl, "text", text, "err", err)
 		return
 	}
 	if _, b, ok := strings.Cut(result, "</think>"); ok {
 		result = b
 	}
 	summary = strings.TrimSpace(result)
-	logger().Infow("summarize ok", "tpl", tpl, "text", words.TakeHead(text, 90, ".."),
+	logger().Info("summarize ok", "tpl", tpl, "text", words.TakeHead(text, 90, ".."),
 		"result", words.TakeHead(summary, 50, ".."))
 	return
 }
@@ -131,7 +134,7 @@ func GetHistorySummary(ctx context.Context, history aigc.HistoryItems) (summary 
 	if err != nil {
 		return
 	}
-	logger().Infow("history summary ok", "history", aigc.HiLogged(history))
+	logger().Info("history summary ok", "history", aigc.HiLogged(history))
 	return
 }
 

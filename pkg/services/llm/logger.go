@@ -1,10 +1,5 @@
 package llm
 
-import (
-	"github.com/cupogo/andvari/utils/zlog"
-)
+import "log/slog"
 
-// logger returns the global logger instance
-func logger() zlog.Logger {
-	return zlog.Get()
-}
+func logger() *slog.Logger { return slog.Default() }

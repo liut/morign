@@ -37,13 +37,13 @@ func LogInteraction(logDir, provider string, log *InteractionLog) {
 	filename := filepath.Join(logDir, provider+"_"+time.Now().Format("2006-01-02_15")+".jsonl")
 
 	if err := os.MkdirAll(filepath.Dir(filename), 0755); err != nil {
-		logger().Warnw("create log dir failed", "path", filename, "err", err)
+		logger().Warn("create log dir failed", "path", filename, "err", err)
 		return
 	}
 
 	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		logger().Warnw("open log file failed", "path", filename, "err", err)
+		logger().Warn("open log file failed", "path", filename, "err", err)
 		return
 	}
 
@@ -52,12 +52,12 @@ func LogInteraction(logDir, provider string, log *InteractionLog) {
 	if err != nil {
 		auditMu.Unlock()
 		_ = f.Close()
-		logger().Infow("marshal log failed", "err", err)
+		logger().Info("marshal log failed", "err", err)
 		return
 	}
 
 	if _, err := f.Write(append(data, '\n')); err != nil {
-		logger().Infow("write log failed", "err", err)
+		logger().Info("write log failed", "err", err)
 	}
 	auditMu.Unlock()
 	_ = f.Close()

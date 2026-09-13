@@ -19,7 +19,7 @@ type stateStore struct{ rc RedisClient }
 func (ss *stateStore) Save(_ http.ResponseWriter, state string) error {
 	hit := time.Now().UnixMilli()
 	err := ss.rc.Set(context.Background(), getStateKey(state), hit, StateExpiration).Err()
-	logger().Infow("save state", "state", state, "hit", hit, "err", err)
+	logger().Info("save state", "state", state, "hit", hit, "err", err)
 	return err
 }
 

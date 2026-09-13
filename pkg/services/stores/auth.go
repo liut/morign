@@ -91,12 +91,12 @@ func OAuthContextWithToken(ctx context.Context, token string) context.Context {
 func SaveUserWithToken(ctx context.Context, user Encoder, token string) error {
 	s, err := user.Encode()
 	if err != nil {
-		logger().Infow("encode user failed", "err", err)
+		logger().Info("encode user failed", "err", err)
 		return err
 	}
 	key := tokenUserKey(token)
 	if err := SgtRC().Set(ctx, key, s, TokenExpire).Err(); err != nil {
-		logger().Infow("save user to redis failed", "key", key, "err", err)
+		logger().Info("save user to redis failed", "key", key, "err", err)
 		return err
 	}
 	return nil
@@ -107,12 +107,12 @@ func LoadUserFromToken(ctx context.Context, token string) (*User, error) {
 	key := tokenUserKey(token)
 	s, err := SgtRC().Get(ctx, key).Result()
 	if err != nil {
-		logger().Infow("load user from redis failed", "key", key, "err", err)
+		logger().Info("load user from redis failed", "key", key, "err", err)
 		return nil, err
 	}
 	var user User
 	if err := user.Decode(s); err != nil {
-		logger().Infow("decode user failed", "err", err)
+		logger().Info("decode user failed", "err", err)
 		return nil, err
 	}
 	return &user, nil
@@ -122,7 +122,7 @@ func DeleteUserToken(ctx context.Context, token string) error {
 	key := tokenUserKey(token)
 	err := SgtRC().Del(ctx, key).Err()
 	if err != nil {
-		logger().Infow("del token from redis failed", "key", key, "err", err)
+		logger().Info("del token from redis failed", "key", key, "err", err)
 		return err
 	}
 	return nil
@@ -138,7 +138,7 @@ func SaveTokenWithExpiry(ctx context.Context, id, token string, expiry time.Dura
 	}
 	key := userTokenKey(id)
 	if err := SgtRC().Set(ctx, key, token, expiry).Err(); err != nil {
-		logger().Infow("save token to redis failed", "key", key, "err", err)
+		logger().Info("save token to redis failed", "key", key, "err", err)
 		return err
 	}
 	return nil
@@ -148,7 +148,7 @@ func LoadTokenWithUser(ctx context.Context, id string) (string, error) {
 	key := userTokenKey(id)
 	tok, err := SgtRC().Get(ctx, key).Result()
 	if err != nil {
-		logger().Infow("load token from redis failed", "key", key, "err", err)
+		logger().Info("load token from redis failed", "key", key, "err", err)
 		return "", err
 	}
 	return tok, nil
@@ -222,7 +222,7 @@ func DbOpModelMetaOwner(ctx context.Context, db ormDB, obj ModelMetaOwner) (err 
 		return
 	}
 	if _, cat, _ := ownID.Split(); cat != oid.OtAccount {
-		logger().Infow("not account", "ownID", ownID)
+		logger().Info("not account", "ownID", ownID)
 		return
 	}
 	return opModelMetaSet(ctx, obj, field.MetaOwner, obj.GetOwnerID(), func(ctx context.Context, id oid.OID) (any, error) {

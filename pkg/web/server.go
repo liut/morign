@@ -56,7 +56,7 @@ func New(cfg Config) Service {
 	}
 
 	if cfg.Debug {
-		logger().Infow("routes:")
+		logger().Info("routes:")
 		walkFunc := func(method string, route string, handler http.Handler, middlewares ...func(http.Handler) http.Handler) error {
 			route = strings.ReplaceAll(route, "/*/", "/")
 			fmt.Fprintf(os.Stderr, "DEBUG: %-6s %-24s --> %s (%d mw)\n", method, route, nameOfFunction(handler), len(middlewares))
@@ -64,7 +64,7 @@ func New(cfg Config) Service {
 		}
 
 		if err := chi.Walk(ar, walkFunc); err != nil {
-			logger().Infow("router walk fail", "err", err)
+			logger().Info("router walk fail", "err", err)
 		}
 	}
 	return s
@@ -78,14 +78,14 @@ func (s *server) Serve(ctx context.Context) error {
 	})
 
 	defer t.Stop()
-	logger().Infow("Listen on", "addr", s.hs.Addr)
+	logger().Info("Listen on", "addr", s.hs.Addr)
 
 	// Wait
 	for {
 		select {
 		case runErr := <-runErrChan:
 			if runErr != nil {
-				logger().Infow("run http server failed",
+				logger().Info("run http server failed",
 					"err", runErr,
 				)
 				return runErr
@@ -100,8 +100,8 @@ func (s *server) Serve(ctx context.Context) error {
 
 func (s *server) Stop(ctx context.Context) error {
 	if err := s.hs.Shutdown(ctx); err != nil {
-		logger().Fatalw("Server Shutdown", "err", err)
-		return err
+		logger().Error("Server Shutdown", "err", err)
+		os.Exit(1)
 	}
 	return nil
 }
@@ -132,7 +132,7 @@ func recoverer(isDebug bool) func(http.Handler) http.Handler {
 					if rvr == http.ErrAbortHandler {
 						panic(rvr)
 					}
-					logger().Errorw("panic recovered", "err", rvr, "stack", string(debug.Stack()))
+					logger().Error("panic recovered", "err", rvr, "stack", string(debug.Stack()))
 					if r.Header.Get("Connection") != "Upgrade" {
 						if isDebug {
 							http.Error(w, fmt.Sprintf("panic: %v\n\n%s", rvr, debug.Stack()), http.StatusInternalServerError)

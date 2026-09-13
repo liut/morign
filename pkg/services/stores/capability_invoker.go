@@ -41,7 +41,7 @@ func (inv *CapabilityInvoker) Invoke(ctx context.Context, method, endpoint strin
 		return nil, err
 	}
 
-	logger().Infow("invoking api", "method", method, "url", reqURL, "params", params)
+	logger().Info("invoking api", "method", method, "url", reqURL, "params", params)
 
 	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
 	if err != nil {
@@ -129,7 +129,7 @@ func (inv *CapabilityInvoker) InvokeAsTool(ctx context.Context, args map[string]
 
 	resp, err := inv.Invoke(ctx, method, endpoint, params)
 	if err != nil {
-		logger().Infow("invoke fail", "err", err)
+		logger().Info("invoke fail", "err", err)
 		return mcps.BuildToolErrorResult(err.Error()), nil
 	}
 	if resp == nil {
@@ -145,7 +145,7 @@ func (inv *CapabilityInvoker) InvokeAsTool(ctx context.Context, args map[string]
 	}
 
 	if resp.StatusCode >= 400 {
-		logger().Infow("invoked", method, endpoint, "status", resp.StatusCode, "result", result)
+		logger().Info("invoked", method, endpoint, "status", resp.StatusCode, "result", result)
 		if resp.StatusCode == 403 {
 			return mcps.BuildToolErrorResult("Permission denied: no access to this API"), nil
 		}
@@ -153,7 +153,7 @@ func (inv *CapabilityInvoker) InvokeAsTool(ctx context.Context, args map[string]
 			fmt.Sprintf("HTTP error %d: %s", resp.StatusCode, resp.Status),
 		), nil
 	}
-	logger().Debugw("invoked", method, endpoint, "response", result)
+	logger().Debug("invoked", method, endpoint, "response", result)
 
 	resultKey := settings.Current.BusResult
 	if len(resultKey) > 0 {

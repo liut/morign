@@ -136,7 +136,7 @@ func (s *conversation) CountHistory(ctx context.Context) int {
 	key := s.getKey()
 	n, err := s.rc.LLen(ctx, key).Result()
 	if err != nil {
-		logger().Infow("llen fail", "key", key, "err", err)
+		logger().Info("llen fail", "key", key, "err", err)
 		return 0
 	}
 	return int(n)
@@ -152,10 +152,10 @@ func (s *conversation) AddHistory(ctx context.Context, item *aigc.HistoryItem) e
 	lastMsg, err := s.getLastUserMessage(ctx)
 	if err == nil && lastMsg != nil && lastMsg.ChatItem != nil && item.ChatItem != nil {
 		if lastMsg.ChatItem.User == item.ChatItem.User {
-			logger().Debugw("replace last history with same user", "key", key, "user", item.ChatItem.User)
+			logger().Debug("replace last history with same user", "key", key, "user", item.ChatItem.User)
 			// 删除最后一条
 			if err := s.rc.RPop(ctx, key).Err(); err != nil {
-				logger().Infow("rpop last history fail", "key", key, "err", err)
+				logger().Info("rpop last history fail", "key", key, "err", err)
 			}
 		}
 	}
@@ -173,12 +173,12 @@ func (s *conversation) AddHistory(ctx context.Context, item *aigc.HistoryItem) e
 			return err
 		}
 		if count > historyMaxLength {
-			logger().Infow("history length overflow", "count", count)
+			logger().Info("history length overflow", "count", count)
 			err = s.rc.LPop(ctx, key).Err()
 		}
 	}
 	if err != nil {
-		logger().Infow("add history fail", "key", key, "err", err)
+		logger().Info("add history fail", "key", key, "err", err)
 		return err
 	}
 
@@ -237,23 +237,23 @@ func ContextWithConvoID(ctx context.Context, csid string) context.Context {
 // LoadPreset loads preset configuration from file
 func LoadPreset() (doc aigc.Preset, err error) {
 	if len(settings.Current.PresetFile) == 0 {
-		logger().Infow("preset file is not set")
+		logger().Info("preset file is not set")
 		return
 	}
 
 	var yf *os.File
 	yf, err = os.Open(settings.Current.PresetFile)
 	if err != nil {
-		logger().Infow("load preset fail", "file", settings.Current.PresetFile, "err", err)
+		logger().Info("load preset fail", "file", settings.Current.PresetFile, "err", err)
 		return
 	}
 	defer func() { _ = yf.Close() }()
 	err = yaml.NewDecoder(yf).Decode(&doc)
 	if err != nil {
-		logger().Infow("decode preset fail", "err", err)
+		logger().Info("decode preset fail", "err", err)
 		return
 	}
-	logger().Debugw("loaded preset", "name", settings.Current.PresetFile)
+	logger().Debug("loaded preset", "name", settings.Current.PresetFile)
 
 	return
 }

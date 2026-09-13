@@ -23,7 +23,7 @@ func HeaderFuncFor(cate mcps.HeaderCate) mcps.HeaderFunc {
 		return func(ctx context.Context) map[string]string {
 			csid := ConvoIDFromContext(ctx)
 			if user, ok := UserFromContext(ctx); ok && len(csid) > 0 {
-				logger().Debugw("got scarf", "uid", user.OID, "csid", csid)
+				logger().Debug("got scarf", "uid", user.OID, "csid", csid)
 				return map[string]string{
 					"X-Owner-Id":   user.OID,
 					"X-Session-Id": csid,

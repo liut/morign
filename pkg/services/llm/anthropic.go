@@ -50,7 +50,7 @@ func (p *anthropicProvider) Chat(ctx context.Context, cfg *config, messages []Me
 		}
 		reqBody.Tools = converted
 	}
-	logger().Infow("chat start",
+	logger().Info("chat start",
 		"model", cfg.model,
 		"msgs_count", len(messages),
 		"tools_count", len(tools),
@@ -61,13 +61,13 @@ func (p *anthropicProvider) Chat(ctx context.Context, cfg *config, messages []Me
 
 	b, err := json.Marshal(reqBody)
 	if err != nil {
-		logger().Infow("marshal chat request failed", "err", err)
+		logger().Info("marshal chat request failed", "err", err)
 		return nil, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(b))
 	if err != nil {
-		logger().Infow("create chat request failed", "err", err, "endpoint", endpoint)
+		logger().Info("create chat request failed", "err", err, "endpoint", endpoint)
 		return nil, err
 	}
 
@@ -87,7 +87,7 @@ func (p *anthropicProvider) Chat(ctx context.Context, cfg *config, messages []Me
 
 	resp, err := hc.Do(req)
 	if err != nil {
-		logger().Warnw("anthropic request failed", "err", err, "endpoint", endpoint)
+		logger().Warn("anthropic request failed", "err", err, "endpoint", endpoint)
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -95,7 +95,7 @@ func (p *anthropicProvider) Chat(ctx context.Context, cfg *config, messages []Me
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		errMsg := fmt.Errorf("http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-		logger().Warnw("anthropic response error", "status", resp.StatusCode, "body", string(body))
+		logger().Warn("anthropic response error", "status", resp.StatusCode, "body", string(body))
 		return nil, errMsg
 	}
 
@@ -148,7 +148,7 @@ func (p *anthropicProvider) StreamChat(ctx context.Context, cfg *config, message
 			reqBody.Tools = converted
 		}
 
-		logger().Infow("stream start",
+		logger().Info("stream start",
 			"model", cfg.model,
 			"msgs_count", len(messages),
 			"tools_count", len(tools),
@@ -160,14 +160,14 @@ func (p *anthropicProvider) StreamChat(ctx context.Context, cfg *config, message
 
 		reqBodyBytes, err := json.Marshal(reqBody)
 		if err != nil {
-			logger().Warnw("marshal stream request failed", "err", err)
+			logger().Warn("marshal stream request failed", "err", err)
 			yield(nil, err)
 			return
 		}
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(reqBodyBytes))
 		if err != nil {
-			logger().Warnw("create stream request failed", "err", err, "reqBody", string(reqBodyBytes))
+			logger().Warn("create stream request failed", "err", err, "reqBody", string(reqBodyBytes))
 			yield(nil, err)
 			return
 		}
@@ -188,7 +188,7 @@ func (p *anthropicProvider) StreamChat(ctx context.Context, cfg *config, message
 
 		resp, err := hc.Do(req)
 		if err != nil {
-			logger().Warnw("stream request failed", "err", err, "reqBody", string(reqBodyBytes))
+			logger().Warn("stream request failed", "err", err, "reqBody", string(reqBodyBytes))
 			yield(nil, err)
 			return
 		}
@@ -201,7 +201,7 @@ func (p *anthropicProvider) StreamChat(ctx context.Context, cfg *config, message
 			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 			_ = resp.Body.Close()
 			errMsg := fmt.Errorf("http %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
-			logger().Warnw("stream response error",
+			logger().Warn("stream response error",
 				"status", resp.StatusCode,
 				"respBody", string(respBody))
 			yield(nil, errMsg)
@@ -238,7 +238,7 @@ func (p *anthropicProvider) parseStreamResponse(body io.Reader, push Pusher, deb
 			if err == io.EOF {
 				push(&Event{Done: true}, nil)
 			} else {
-				logger().Infow("read stream response failed", "err", err)
+				logger().Info("read stream response failed", "err", err)
 				return fmt.Errorf("read: %w", err)
 			}
 			return nil
@@ -273,7 +273,7 @@ func (p *anthropicProvider) parseStreamResponse(body io.Reader, push Pusher, deb
 		currentToolCalls = toolCalls
 
 		if done {
-			logger().Infow("stream done", "event_type", se.Type, "tool_calls_count", len(currentToolCalls))
+			logger().Info("stream done", "event_type", se.Type, "tool_calls_count", len(currentToolCalls))
 			return nil
 		}
 	}
@@ -327,7 +327,7 @@ type streamEvent struct {
 func (p *anthropicProvider) parseStreamEvent(data []byte) (streamEvent, error) {
 	var event streamEvent
 	if err := json.Unmarshal(data, &event); err != nil {
-		logger().Infow("parse anthropic stream event fail", "err", err, "data", string(data))
+		logger().Info("parse anthropic stream event fail", "err", err, "data", string(data))
 		return event, err
 	}
 	return event, nil
@@ -352,7 +352,7 @@ func (p *anthropicProvider) handleStreamEvent(se streamEvent, currentText *strin
 					Name: se.ContentBlock.Name,
 				},
 			})
-			logger().Debugw("tool_use started", "id", toolID, "name", se.ContentBlock.Name)
+			logger().Debug("tool_use started", "id", toolID, "name", se.ContentBlock.Name)
 		}
 	case "content_block_delta":
 		switch se.Delta.Type {
@@ -443,7 +443,7 @@ func (p *anthropicProvider) handleStreamEvent(se streamEvent, currentText *strin
 	case "ping":
 		// 忽略
 	default:
-		logger().Infow("unknown anthropic event type", "type", se.Type)
+		logger().Info("unknown anthropic event type", "type", se.Type)
 	}
 	return false, currentToolCalls
 }
@@ -502,7 +502,7 @@ func toAnthropicTools(tools []ToolDefinition) ([]anthropicTool, error) {
 	for _, t := range tools {
 		params, err := schemaToRawJSON(t.Function.Parameters)
 		if err != nil {
-			logger().Infow("convert tool to anthropic format failed", "err", err,
+			logger().Info("convert tool to anthropic format failed", "err", err,
 				"tool", t.Function.Name)
 			return nil, fmt.Errorf("anthropic tool schema %s: %w", t.Function.Name, err)
 		}
@@ -666,11 +666,11 @@ func parseAnthropicResponse(body []byte) (*ChatResult, error) {
 		Usage *anthropicUsage `json:"usage,omitempty"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		logger().Warnw("parse anthropic response failed", "err", err, "body", string(body))
+		logger().Warn("parse anthropic response failed", "err", err, "body", string(body))
 		return nil, fmt.Errorf("parse anthropic response: %w", err)
 	}
 	if len(parsed.Content) == 0 {
-		logger().Warnw("anthropic response has empty content", "body", string(body))
+		logger().Warn("anthropic response has empty content", "body", string(body))
 		return nil, fmt.Errorf("anthropic response: empty content")
 	}
 
@@ -714,7 +714,7 @@ func schemaToRawJSON(params any) (json.RawMessage, error) {
 	}
 	b, err := json.Marshal(params)
 	if err != nil {
-		logger().Infow("schema to raw JSON failed", "err", err, "params", params)
+		logger().Info("schema to raw JSON failed", "err", err, "params", params)
 		return nil, err
 	}
 	return json.RawMessage(b), nil

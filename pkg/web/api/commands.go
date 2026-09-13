@@ -57,7 +57,7 @@ func handleResetCommand(ctx context.Context, msg *channel.Message) (bool, error)
 	if err := stores.ResetSessionBySessionKey(ctx, msg.SessionKey); err != nil {
 		return false, err
 	}
-	logger().Infow("command: session reset", "sessionKey", msg.SessionKey)
+	logger().Info("command: session reset", "sessionKey", msg.SessionKey)
 	return true, nil
 }
 

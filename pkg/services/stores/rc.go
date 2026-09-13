@@ -23,12 +23,14 @@ func SgtRC() RedisClient {
 		redisURI := settings.Current.RedisURI
 		opt, err := redis.ParseURL(redisURI)
 		if err != nil {
-			logger().Panicw("prase redisURI fail", "uri", redisURI, "err", err)
+			logger().Error("prase redisURI fail", "uri", redisURI, "err", err)
+			panic(err)
 		}
 		rcu = redis.NewClient(opt)
 		pingStatus := rcu.Ping(context.Background())
 		if err = pingStatus.Err(); err != nil {
-			logger().Panicw("ping redis fail", "err", err)
+			logger().Error("ping redis fail", "err", err)
+			panic(err)
 		}
 	})
 

@@ -99,7 +99,7 @@ func (r *Registry) Invoke(ctx context.Context, name string, params map[string]an
 		return mcps.BuildToolErrorResult("tool name is empty"), nil
 	}
 
-	logger().Debugw("invoking", "toolName", name, "params", params)
+	logger().Debug("invoking", "toolName", name, "params", params)
 
 	// 先查频道专属 invokers
 	if ch := mcps.ChannelFromContext(ctx); ch != "" {
@@ -173,7 +173,7 @@ func (r *Registry) initTools(sto stores.Storage) {
 	r.tools = append(r.tools, fetchDescriptor)
 	r.invokers[ToolNameFetch] = r.callFetch
 
-	logger().Debugw("init tools", "tools", mcps.ToolNames(r.tools), "priv", len(r.privTools))
+	logger().Debug("init tools", "tools", mcps.ToolNames(r.tools), "priv", len(r.privTools))
 }
 
 // ApplyToolDescriptions 应用 preset 中的自定义工具描述
@@ -198,7 +198,7 @@ func (r *Registry) ApplyToolDescriptions(descriptions map[string]string) {
 		}
 	}
 
-	logger().Infow("applied custom tool descriptions", "count", len(descriptions))
+	logger().Info("applied custom tool descriptions", "count", len(descriptions))
 }
 
 // ToolsFor 返回适合当前上下文的工具列表
@@ -309,7 +309,7 @@ func (r *Registry) AddServer(ctx context.Context, server *mcps.ServerBasic) erro
 		return fmt.Errorf("failed to start MCP client: %w", err)
 	}
 
-	logger().Debugw("MCP initializing", "name", server.Name, "uri", server.URL, "type", server.TransType)
+	logger().Debug("MCP initializing", "name", server.Name, "uri", server.URL, "type", server.TransType)
 	// 初始化 MCP 协议
 	if _, err := c.Initialize(ctx, mcp.InitializeRequest{
 		Params: mcp.InitializeParams{
@@ -383,12 +383,12 @@ func (r *Registry) registerToolsLocked(
 			return callServerToolWithClient(ctx, client, tool.Name, params)
 		}
 		tNames = append(tNames, toolKey)
-		logger().Infow("MCP tool registered", "toolKey", toolKey)
+		logger().Info("MCP tool registered", "toolKey", toolKey)
 	}
 	mcpc.toolNames = tNames
 	servers[server.Name] = mcpc
 
-	logger().Debugw("MCP server added", "server", server.Name, "url", server.URL, "tools", len(result.Tools))
+	logger().Debug("MCP server added", "server", server.Name, "url", server.URL, "tools", len(result.Tools))
 	return nil
 }
 
@@ -410,7 +410,7 @@ func (r *Registry) RemoveChannelTools(channel string) {
 			_ = s.client.Close()
 		}
 	}
-	logger().Infow("channel MCP tools removed", "channel", channel)
+	logger().Info("channel MCP tools removed", "channel", channel)
 }
 
 // checkServerNameConflict 检查 server 名是否冲突（server 名独立于工具名）
@@ -495,7 +495,7 @@ func callServerToolWithClient(ctx context.Context, c *client.Client, toolName st
 			},
 		})
 	if err != nil {
-		logger().Errorw("MCP server tool call failed", "tool", toolName, "err", err)
+		logger().Error("MCP server tool call failed", "tool", toolName, "err", err)
 		return mcps.BuildToolErrorResult(fmt.Sprintf("tool '%s' call failed: %s", toolName, err)), nil
 	}
 
@@ -513,7 +513,7 @@ func loadAllServerSpec() *stores.MCPServerSpec {
 // LoadServers 加载所有活跃的远程 MCP Server
 func (r *Registry) LoadServers(ctx context.Context, sto stores.Storage) error {
 	if sto == nil {
-		logger().Warnw("no storage configured, skipping MCP server load")
+		logger().Warn("no storage configured, skipping MCP server load")
 		return nil
 	}
 	return r.loadServers(ctx, sto.MCP())
@@ -530,18 +530,18 @@ func (r *Registry) loadServers(ctx context.Context, sto stores.MCPStore) error {
 	loaded := 0
 	for i := range servers {
 		if !servers[i].TransType.IsRemote() {
-			logger().Infow("skipping non-remote MCP server", "name", servers[i].Name, "type", servers[i].TransType)
+			logger().Info("skipping non-remote MCP server", "name", servers[i].Name, "type", servers[i].TransType)
 			continue
 		}
 		if err := r.AddServer(ctx, &servers[i].ServerBasic); err != nil {
-			logger().Warnw("failed to load MCP server", "name", servers[i].Name, "err", err)
+			logger().Warn("failed to load MCP server", "name", servers[i].Name, "err", err)
 			continue
 		}
 		loaded++
-		logger().Infow("loaded MCP server", "name", servers[i].Name)
+		logger().Info("loaded MCP server", "name", servers[i].Name)
 	}
 
-	logger().Infow("MCP servers loaded", "fetched", len(servers), "loaded", loaded)
+	logger().Info("MCP servers loaded", "fetched", len(servers), "loaded", loaded)
 	return nil
 }
 
@@ -579,6 +579,6 @@ func (r *Registry) RemoveServer(name string) error {
 	r.serversMu.Unlock()
 	r.toolsMu.Unlock()
 
-	logger().Infow("MCP server removed", "name", name)
+	logger().Info("MCP server removed", "name", name)
 	return nil
 }

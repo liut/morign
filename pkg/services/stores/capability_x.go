@@ -88,7 +88,7 @@ func (s *capabilityStore) afterCreatedCapability(ctx context.Context, obj *capab
 
 	_, err = s.CreateCapabilityVector(ctx, cvb)
 	if err != nil {
-		logger().Infow("create capability vector fail", "cvb", &cvb, "err", err)
+		logger().Info("create capability vector fail", "cvb", &cvb, "err", err)
 		return err
 	}
 	return nil
@@ -101,18 +101,18 @@ func (s *capabilityStore) afterUpdatedCapability(ctx context.Context, doc *capab
 	existing := new(capability.CapabilityVector)
 	err := dbGetWithUnique(ctx, s.w.db, existing, "cap_id", doc.ID)
 	if err == nil && existing.Subject == subject {
-		logger().Debugw("unchange vector", "subject", subject)
+		logger().Debug("unchange vector", "subject", subject)
 		return nil
 	}
 	vec, verr := GetEmbedding(ctx, subject)
 	if verr != nil {
-		logger().Warnw("skip capability due to embedding fail", "id", doc.ID, "err", err)
+		logger().Warn("skip capability due to embedding fail", "id", doc.ID, "err", err)
 		return verr // Skip this capability, continue with next
 	}
 	if err == nil {
 		// Update existing
 		if existing.Subject != subject {
-			logger().Infow("subject changed", "id", doc.ID, "old", existing.Subject, "new", subject)
+			logger().Info("subject changed", "id", doc.ID, "old", existing.Subject, "new", subject)
 		}
 		existing.SetWith(capability.CapabilityVectorSet{
 			Subject: &subject,
@@ -130,7 +130,7 @@ func (s *capabilityStore) afterUpdatedCapability(ctx context.Context, doc *capab
 		}
 		_, err = s.CreateCapabilityVector(ctx, cvb)
 		if err != nil {
-			logger().Warnw("create capability vector fail", "capId", doc.ID, "err", err)
+			logger().Warn("create capability vector fail", "capId", doc.ID, "err", err)
 			return err
 		}
 	}
@@ -206,7 +206,7 @@ func (s *capabilityStore) rerankCapabilities(ctx context.Context, query string, 
 	if cachedIDs := rerankCacheGet(ctx, cacheKey); len(cachedIDs) > 0 {
 		out := rerankRebuildFromCache(cachedIDs, candidates)
 		if len(out) > 0 {
-			logger().Infow("rerank cache hit", "query", query)
+			logger().Info("rerank cache hit", "query", query)
 			return out, nil
 		}
 	}
@@ -230,7 +230,7 @@ func (s *capabilityStore) rerankCapabilities(ctx context.Context, query string, 
 
 	result, err := client.Chat(ctx, messages, nil)
 	if err != nil {
-		logger().Infow("rerank llm chat fail", "query", query, "err", err)
+		logger().Info("rerank llm chat fail", "query", query, "err", err)
 		return nil, err
 	}
 
@@ -248,12 +248,12 @@ func (s *capabilityStore) rerankCapabilities(ctx context.Context, query string, 
 
 	var rr rerankResult
 	if err := json.Unmarshal([]byte(content), &rr); err != nil {
-		logger().Infow("rerank json parse fail", "query", query, "content", content, "err", err)
+		logger().Info("rerank json parse fail", "query", query, "content", content, "err", err)
 		return nil, err
 	}
 
 	if len(rr.Relevant) == 0 {
-		logger().Infow("rerank: all candidates marked irrelevant", "query", query)
+		logger().Info("rerank: all candidates marked irrelevant", "query", query)
 		rerankCacheSet(ctx, cacheKey, nil) // cache empty result with short TTL
 		return nil, nil
 	}
@@ -263,7 +263,7 @@ func (s *capabilityStore) rerankCapabilities(ctx context.Context, query string, 
 	for _, item := range rr.Relevant {
 		idx := item.Index - 1 // LLM uses 1-based indexing
 		if idx < 0 || idx >= len(candidates) {
-			logger().Infow("rerank: index out of range, skipping", "index", item.Index, "candidates", len(candidates))
+			logger().Info("rerank: index out of range, skipping", "index", item.Index, "candidates", len(candidates))
 			continue
 		}
 		out = append(out, candidates[idx])
@@ -276,7 +276,7 @@ func (s *capabilityStore) rerankCapabilities(ctx context.Context, query string, 
 	}
 	rerankCacheSet(ctx, cacheKey, ids)
 
-	logger().Infow("rerank ok", "query", query, "before", len(candidates), "after", len(out))
+	logger().Info("rerank ok", "query", query, "before", len(candidates), "after", len(out))
 	return out, nil
 }
 
@@ -297,7 +297,7 @@ func rerankCacheGet(ctx context.Context, key string) []string {
 	}
 	var ids []string
 	if err := json.Unmarshal([]byte(val), &ids); err != nil {
-		logger().Infow("rerank cache unmarshal fail", "key", key, "err", err)
+		logger().Info("rerank cache unmarshal fail", "key", key, "err", err)
 		return nil
 	}
 	return ids
@@ -315,11 +315,11 @@ func rerankCacheSet(ctx context.Context, key string, ids []string) {
 	}
 	data, err := json.Marshal(ids)
 	if err != nil {
-		logger().Infow("rerank cache marshal fail", "key", key, "err", err)
+		logger().Info("rerank cache marshal fail", "key", key, "err", err)
 		return
 	}
 	if err := rc.Set(ctx, key, data, ttl).Err(); err != nil {
-		logger().Infow("rerank cache set fail", "key", key, "err", err)
+		logger().Info("rerank cache set fail", "key", key, "err", err)
 	}
 }
 
@@ -340,16 +340,16 @@ func rerankRebuildFromCache(ids []string, candidates capability.Capabilities) ca
 // MatchVectorWith matches capabilities using vector
 func (s *capabilityStore) MatchVectorWith(ctx context.Context, vec corpus.Vector, threshold float32, limit int) (data []capability.CapabilityMatch, err error) {
 	if len(vec) != corpus.VectorLen {
-		logger().Infow("mismatch length of vector", "a", len(vec), "b", corpus.VectorLen)
+		logger().Info("mismatch length of vector", "a", len(vec), "b", corpus.VectorLen)
 		return
 	}
-	logger().Debugw("match capability with", "vec", vec[0:5])
+	logger().Debug("match capability with", "vec", vec[0:5])
 	err = s.w.db.NewRaw("SELECT * FROM vector_match_capability_4(?, ?, ?)", vec, threshold, limit).
 		Scan(ctx, &data)
 	if err != nil {
-		logger().Infow("match capability vector fail", "threshold", threshold, "limit", limit, "err", err)
+		logger().Info("match capability vector fail", "threshold", threshold, "limit", limit, "err", err)
 	} else {
-		logger().Debugw("match capability vector ok", "threshold", threshold, "limit", limit, "data", data)
+		logger().Debug("match capability vector ok", "threshold", threshold, "limit", limit, "data", data)
 	}
 	return
 }
@@ -369,23 +369,23 @@ func (s *capabilityStore) MatchCapabilities(ctx context.Context, ms MatchSpec) (
 	}
 
 	if len(subject) == 0 {
-		logger().Infow("empty subject", "spec", ms)
+		logger().Info("empty subject", "spec", ms)
 		return
 	}
 
 	vec, err := GetEmbedding(ctx, subject)
 	if err != nil {
-		logger().Infow("GetEmbedding fail", "err", err)
+		logger().Info("GetEmbedding fail", "err", err)
 		return
 	}
 	if len(vec) != corpus.VectorLen {
-		logger().Infow("embedding length mismatch", "a", len(vec), "b", corpus.VectorLen)
+		logger().Info("embedding length mismatch", "a", len(vec), "b", corpus.VectorLen)
 		return
 	}
 
 	matches, err := s.MatchVectorWith(ctx, vec, ms.Threshold, ms.Limit)
 	if err != nil || len(matches) == 0 {
-		logger().Infow("no match capabilities", "subj", subject)
+		logger().Info("no match capabilities", "subj", subject)
 		return
 	}
 
@@ -393,13 +393,13 @@ func (s *capabilityStore) MatchCapabilities(ctx context.Context, ms MatchSpec) (
 	for _, m := range matches {
 		ids = append(ids, m.DocID)
 	}
-	logger().Infow("matched", "caps", ids, "err", err)
+	logger().Info("matched", "caps", ids, "err", err)
 
 	spec := &CapCapabilitySpec{}
 	spec.IDs = ids
 	err = queryList(ctx, s.w.db, spec, &data).Scan(ctx)
 	if err != nil {
-		logger().Infow("list capabilities fail", "spec", spec, "err", err)
+		logger().Info("list capabilities fail", "spec", spec, "err", err)
 	}
 
 	return
@@ -422,7 +422,7 @@ func (s *capabilityStore) SyncEmbeddingCapabilities(ctx context.Context, spec *C
 func (s *capabilityStore) ImportCapabilities(ctx context.Context, r io.Reader, lw io.Writer, markMissingPrefix string) error {
 	doc, err := decodeSwaggerDoc(r)
 	if err != nil {
-		logger().Infow("decode swagger fail", "err", err)
+		logger().Info("decode swagger fail", "err", err)
 		return err
 	}
 
@@ -449,7 +449,7 @@ func (s *capabilityStore) ImportCapabilities(ctx context.Context, r io.Reader, l
 			// Try to find existing by method+endpoint (unique constraint)
 			existing, err := s.GetCapabilityWith(ctx, method, path)
 			if err != nil && !errors.Is(err, ErrNoRows) {
-				logger().Warnw("check existing fail", "path", path, "method", method, "err", err)
+				logger().Warn("check existing fail", "path", path, "method", method, "err", err)
 				continue
 			}
 
@@ -459,7 +459,7 @@ func (s *capabilityStore) ImportCapabilities(ctx context.Context, r io.Reader, l
 			}) {
 				if existing != nil && existing.ID.Valid() {
 					if err := s.DeleteCapability(ctx, existing.StringID()); err != nil {
-						logger().Infow("delete skipai capability fail", "path", path, "method", method, "err", err)
+						logger().Info("delete skipai capability fail", "path", path, "method", method, "err", err)
 					} else if lw != nil {
 						_, _ = fmt.Fprintf(lw, "%s %s [deleted]\n", method, path)
 					}
@@ -502,7 +502,7 @@ func (s *capabilityStore) ImportCapabilities(ctx context.Context, r io.Reader, l
 					Tags:        &api.Tags,
 				})
 				if err != nil {
-					logger().Warnw("update capability fail", "path", path, "method", method, "err", err)
+					logger().Warn("update capability fail", "path", path, "method", method, "err", err)
 					skipped++
 					continue
 				}
@@ -513,7 +513,7 @@ func (s *capabilityStore) ImportCapabilities(ctx context.Context, r io.Reader, l
 				// Create new
 				_, err = s.CreateCapability(ctx, basic)
 				if err != nil {
-					logger().Warnw("create capability fail", "path", path, "method", method, "err", err)
+					logger().Warn("create capability fail", "path", path, "method", method, "err", err)
 					skipped++
 					continue
 				}
@@ -530,11 +530,11 @@ func (s *capabilityStore) ImportCapabilities(ctx context.Context, r io.Reader, l
 	if markMissingPrefix != "" {
 		missed, err = s.markMissingCapabilities(ctx, lw, markMissingPrefix, importedEndpoints)
 		if err != nil {
-			logger().Warnw("mark missing fail", "err", err)
+			logger().Warn("mark missing fail", "err", err)
 		}
 	}
 
-	logger().Infow("import swagger", "imported", imported, "skipped", skipped, "missed", missed)
+	logger().Info("import swagger", "imported", imported, "skipped", skipped, "missed", missed)
 	return nil
 }
 
@@ -557,7 +557,7 @@ func (s *capabilityStore) markMissingCapabilities(ctx context.Context, lw io.Wri
 			set := capability.CapabilitySet{}
 			set.MetaAddKVs("missed", "yes")
 			if err := s.UpdateCapability(ctx, ca.StringID(), set); err != nil {
-				logger().Warnw("mark missed fail", "id", ca.StringID(), "err", err)
+				logger().Warn("mark missed fail", "id", ca.StringID(), "err", err)
 				continue
 			}
 			missed++
@@ -593,13 +593,13 @@ func (s *capabilityStore) InvokerForMatch() mcps.Invoker {
 		if len(caps) == 0 {
 			return mcps.BuildToolSuccessResult("No matching APIs found"), nil
 		}
-		logger().Infow("matched", "caps", len(caps), "endpoints", caps.Endpoints())
+		logger().Info("matched", "caps", len(caps), "endpoints", caps.Endpoints())
 
 		// Re-rank if enabled and we have more candidates than the requested limit
 		if settings.Current.RerankEnabled && len(caps) > limit {
 			reranked, rerr := s.rerankCapabilities(ctx, intent, caps)
 			if rerr != nil {
-				logger().Infow("rerank failed, using original results", "err", rerr)
+				logger().Info("rerank failed, using original results", "err", rerr)
 			} else if len(reranked) > 0 {
 				caps = reranked
 			}
@@ -669,7 +669,7 @@ func (s *capabilityStore) CleanupMissedCapabilities(ctx context.Context, lw io.W
 					_, _ = fmt.Fprintf(lw, "%s %s %q [delete fail: %v]\n",
 						ca.Method, ca.Endpoint, ca.Summary, err)
 				}
-				logger().Warnw("delete missed capability fail", "id", ca.StringID(), "err", err)
+				logger().Warn("delete missed capability fail", "id", ca.StringID(), "err", err)
 				continue
 			}
 		}

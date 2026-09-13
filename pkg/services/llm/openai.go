@@ -163,7 +163,7 @@ func (p *openAIProvider) StreamChat(ctx context.Context, cfg *config, messages [
 			reqBody.ToolChoice = "auto"
 		}
 
-		logger().Infow("stream start",
+		logger().Info("stream start",
 			"model", cfg.model,
 			"msgs_count", len(messages),
 			"tools_count", len(tools),
@@ -181,7 +181,7 @@ func (p *openAIProvider) StreamChat(ctx context.Context, cfg *config, messages [
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(reqBodyBytes))
 		if err != nil {
-			logger().Warnw("create stream request failed", "err", err, "reqBody", string(reqBodyBytes))
+			logger().Warn("create stream request failed", "err", err, "reqBody", string(reqBodyBytes))
 			yield(nil, err)
 			return
 		}
@@ -201,7 +201,7 @@ func (p *openAIProvider) StreamChat(ctx context.Context, cfg *config, messages [
 
 		resp, err := hc.Do(req)
 		if err != nil {
-			logger().Warnw("stream request failed", "err", err, "reqBody", string(reqBodyBytes))
+			logger().Warn("stream request failed", "err", err, "reqBody", string(reqBodyBytes))
 			yield(nil, err)
 			return
 		}
@@ -211,7 +211,7 @@ func (p *openAIProvider) StreamChat(ctx context.Context, cfg *config, messages [
 			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 			_ = resp.Body.Close()
 			errMsg := fmt.Errorf("http %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
-			logger().Warnw("stream response error",
+			logger().Warn("stream response error",
 				"status", resp.StatusCode,
 				"respBody", string(respBody))
 			yield(nil, errMsg)
@@ -268,7 +268,7 @@ func (p *openAIProvider) parseStreamResponse(body io.Reader, push Pusher, debug 
 		// 去除 data: 前缀和空格
 		noPrefixLine := bytes.TrimLeft(noSpaceLine[5:], " \t")
 		if string(noPrefixLine) == "[DONE]" {
-			logger().Infow("stream DONE", "lines", lines)
+			logger().Info("stream DONE", "lines", lines)
 			push(&Event{Done: true}, nil)
 			return nil
 		}
@@ -297,12 +297,12 @@ func (p *openAIProvider) parseStreamResponse(body io.Reader, push Pusher, debug 
 		}
 
 		if err := json.Unmarshal(noPrefixLine, &chunk); err != nil {
-			logger().Infow("parse chunk fail", "err", err, "rawLine", rawLine)
+			logger().Info("parse chunk fail", "err", err, "rawLine", rawLine)
 			return fmt.Errorf("parse chunk: %w", err)
 		}
 
 		if len(chunk.Choices) == 0 {
-			logger().Debugw("choices is empty", "rawLine", rawLine)
+			logger().Debug("choices is empty", "rawLine", rawLine)
 			continue
 		}
 
@@ -336,7 +336,7 @@ func (p *openAIProvider) parseStreamResponse(body io.Reader, push Pusher, debug 
 			ResponseID: chunk.ID,
 		}
 		if chunk.Usage != nil {
-			logger().Debugw("usage from chunk", "usage", chunk.Usage)
+			logger().Debug("usage from chunk", "usage", chunk.Usage)
 			ev.Usage = chunk.Usage.toUsage()
 		}
 
@@ -359,7 +359,7 @@ func (p *openAIProvider) parseStreamResponse(body io.Reader, push Pusher, debug 
 		}
 
 		if shouldEndStream {
-			logger().Infow("stream done", "finish_reason", finishReason,
+			logger().Info("stream done", "finish_reason", finishReason,
 				"tool_calls_count", len(currentToolCalls), "lines", lines)
 			if logDir != "" {
 				go LogInteraction(logDir, "openai", &InteractionLog{
@@ -404,7 +404,7 @@ func (p *openAIProvider) doChatRequest(ctx context.Context, cfg *config, message
 func buildEndpoint(baseURL, path string) string {
 	base := strings.TrimRight(baseURL, "/")
 	if base == "" {
-		logger().Infow("empty baseURL")
+		logger().Info("empty baseURL")
 		base = "https://api.openai.com/v1"
 	}
 	// 避免重复添加 /v1

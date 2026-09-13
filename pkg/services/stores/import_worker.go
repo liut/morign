@@ -31,9 +31,9 @@ func NewImportWorker(sto ImportTaskProcessor) *ImportWorker {
 func (w *ImportWorker) Run(ctx context.Context) {
 	n, err := w.sto.RecoverImportTasks(ctx)
 	if err != nil {
-		logger().Warnw("recover import tasks fail", "err", err)
+		logger().Warn("recover import tasks fail", "err", err)
 	} else if n > 0 {
-		logger().Infow("recovered import tasks", "n", n)
+		logger().Info("recovered import tasks", "n", n)
 	}
 
 	for {
@@ -43,7 +43,7 @@ func (w *ImportWorker) Run(ctx context.Context) {
 		task, err := w.sto.ClaimImportTask(ctx)
 		if err != nil {
 			if !errors.Is(err, ErrNotFound) {
-				logger().Infow("claim import task fail", "err", err)
+				logger().Info("claim import task fail", "err", err)
 			}
 			if !waitOrDone(ctx, w.interval) {
 				return
@@ -51,7 +51,7 @@ func (w *ImportWorker) Run(ctx context.Context) {
 			continue
 		}
 		if err := w.sto.ProcessImportTask(ctx, task); err != nil {
-			logger().Infow("process import task fail", "id", task.StringID(), "err", err)
+			logger().Info("process import task fail", "id", task.StringID(), "err", err)
 		}
 	}
 }
