@@ -83,7 +83,7 @@ deploy-to-testing:
   script:
    - export LDFLAGS="-X ${ROOF}/pkg/settings.name=${NAME} -X ${ROOF}/pkg/settings.version=${TAG}"
    - mkdir -p dist/linux_amd64
-   - GOOS=linux GOARCH=amd64 go build -ldflags "${LDFLAGS} -s -w" -o dist/linux_amd64/${NAME} ${CI_PROJECT_DIR}
+   - GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "${LDFLAGS} -s -w" -o dist/linux_amd64/${NAME} ${CI_PROJECT_DIR}
    - ssh ${DEVELOP_USER:-sa}@${DEVELOP_HOST:-moon} "test -d dist || mkdir dist"
    - scp dist/linux_amd64/${NAME} ${DEVELOP_USER:-sa}@${DEVELOP_HOST:-moon}:dist/
    - ssh ${DEVELOP_USER:-sa}@${DEVELOP_HOST:-moon} "test -d ${DEPLOY_ROOT}/bin && sudo install dist/${NAME} ${DEPLOY_ROOT}/bin/ && sudo systemctl restart '${NAME}*'" || true
@@ -98,7 +98,7 @@ deploy-to-staging:
   script:
    - export LDFLAGS="-X ${ROOF}/pkg/settings.name=${NAME} -X ${ROOF}/pkg/settings.version=${TAG}"
    - mkdir -p dist/linux_amd64
-   - GOOS=linux GOARCH=amd64 go build -ldflags "${LDFLAGS} -s -w" -o dist/linux_amd64/${NAME} ${CI_PROJECT_DIR}
+   - GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "${LDFLAGS} -s -w" -o dist/linux_amd64/${NAME} ${CI_PROJECT_DIR}
    - ls dist/linux_amd64 | xargs tar -cvJf ${NAME}-linux-amd64-${TAG}.tar.xz -C dist/linux_amd64
    - scp *-linux-amd64-*.tar.?z "${DEPLOY_HOST:-earth}:gopkg/cupola/"
    - ssh ${DEPLOY_USER:-sa}@${DEPLOY_HOST:-earth} "test -d dist && tar -xvJf gopkg/cupola/${NAME}-linux-amd64-${TAG}.tar.xz -C dist"
