@@ -23,6 +23,20 @@ enums:
     textMarshaler: true
     textUnmarshaler: true
 
+  - comment: 导入明细类型
+    name: ImportFailureKind
+    start: 1
+    type: int8
+    values:
+      - label: 失败
+        suffix: Failed
+      - label: 跳过
+        suffix: Skipped
+    stringer: true
+    decodable: true
+    textMarshaler: true
+    textUnmarshaler: true
+
 gename: corpus
 modelpkg: corpus
 
@@ -222,6 +236,10 @@ models:
         name: Reason
         type: string
         tags: {json: 'reason'}
+      - comment: 明细类型（失败 / 跳过），历史数据缺省表示未分类
+        name: Kind
+        type: ImportFailureKind
+        tags: {json: 'kind,omitempty'}
     withPlural: true
 
 stores:

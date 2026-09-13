@@ -56,6 +56,42 @@ func (z ImportTaskStatus) MarshalText() ([]byte, error) {
 	return []byte(z.String()), nil
 }
 
+// 导入明细类型
+type ImportFailureKind int8
+
+const (
+	ImportFailureKindFailed  ImportFailureKind = 1 + iota //  1 失败
+	ImportFailureKindSkipped                              //  2 跳过
+)
+
+func (z *ImportFailureKind) Decode(s string) error {
+	switch s {
+	case "1", "failed", "Failed":
+		*z = ImportFailureKindFailed
+	case "2", "skipped", "Skipped":
+		*z = ImportFailureKindSkipped
+	default:
+		return fmt.Errorf("invalid importFailureKind: %q", s)
+	}
+	return nil
+}
+func (z *ImportFailureKind) UnmarshalText(b []byte) error {
+	return z.Decode(string(b))
+}
+func (z ImportFailureKind) String() string {
+	switch z {
+	case ImportFailureKindFailed:
+		return "failed"
+	case ImportFailureKindSkipped:
+		return "skipped"
+	default:
+		return fmt.Sprintf("importFailureKind %d", int8(z))
+	}
+}
+func (z ImportFailureKind) MarshalText() ([]byte, error) {
+	return []byte(z.String()), nil
+}
+
 // consts of Document 文档
 const (
 	DocumentTable = "corpus_document"
@@ -522,6 +558,10 @@ type ImportFailure struct {
 	Title string `extensions:"x-order=B" form:"title" json:"title"`
 	// 失败原因
 	Reason string `extensions:"x-order=C" form:"reason" json:"reason"`
+	// 明细类型（失败 / 跳过），历史数据缺省表示未分类
+	//  * `failed` - 失败
+	//  * `skipped` - 跳过
+	Kind ImportFailureKind `enums:"failed,skipped" extensions:"x-order=D" json:"kind,omitempty" swaggertype:"string"`
 } // @name corpusImportFailure
 
 type ImportFailures []ImportFailure

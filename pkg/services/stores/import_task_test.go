@@ -116,6 +116,7 @@ func TestIntegration_ImportTaskDuplicateInFile(t *testing.T) {
 	require.Len(t, got.Errors, 1)
 	assert.Equal(t, 3, got.Errors[0].Line)
 	assert.Contains(t, got.Errors[0].Reason, "重复")
+	assert.Equal(t, corpus.ImportFailureKindSkipped, got.Errors[0].Kind)
 
 	doc := getDocument(t, title, "h")
 	assert.Equal(t, "first", doc.Content, "duplicate row must not overwrite existing document")
@@ -137,6 +138,35 @@ func TestIntegration_ImportTaskInvalidRows(t *testing.T) {
 	assert.Equal(t, "数据无效", got.Errors[1].Reason)
 	assert.Equal(t, 3, got.Errors[0].Line)
 	assert.Equal(t, 4, got.Errors[1].Line)
+	assert.Equal(t, corpus.ImportFailureKindFailed, got.Errors[0].Kind)
+	assert.Equal(t, corpus.ImportFailureKindFailed, got.Errors[1].Kind)
+}
+
+// TestIntegration_ImportTaskFailureKinds 覆盖「同一任务内失败与跳过并存」的分类
+func TestIntegration_ImportTaskFailureKinds(t *testing.T) {
+	ctx := context.Background()
+	title := importTaskTitle("kinds")
+
+	_, err := Sgt().Corpus().CreateDocument(ctx, corpus.DocumentBasic{
+		Title:   title,
+		Heading: "dup",
+		Content: "original",
+	})
+	require.NoError(t, err)
+
+	data := "title,heading,content\n" +
+		title + ",dup,updated\n" +
+		",,\n"
+
+	got := runImportTask(t, data)
+
+	assert.Equal(t, corpus.ImportTaskStatusSucceeded, got.Status)
+	assertImportCounts(t, got, 2, 0, 1, 1)
+	require.Len(t, got.Errors, 2)
+	assert.Equal(t, corpus.ImportFailureKindSkipped, got.Errors[0].Kind)
+	assert.Equal(t, corpus.ImportFailureKindFailed, got.Errors[1].Kind)
+	assert.Contains(t, got.Errors[0].Reason, "重复", "既有 reason 文案不变")
+	assert.Equal(t, "数据无效", got.Errors[1].Reason)
 }
 
 // failEmbeddingClient 对包含指定文本的 embedding 请求返回错误

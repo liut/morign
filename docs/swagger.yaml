@@ -3155,6 +3155,10 @@ definitions:
         description: 内容 值
         type: string
         x-order: C
+      similarity:
+        description: 相似度 仅用于查询结果
+        type: number
+        x-order: D
       creatorID:
         description: 创建者ID
         type: string
@@ -3194,6 +3198,16 @@ definitions:
         description: 失败原因
         type: string
         x-order: C
+      kind:
+        description: |-
+          明细类型（失败 / 跳过），历史数据缺省表示未分类
+           * `failed` - 失败
+           * `skipped` - 跳过
+        type: string
+        enum:
+          - failed
+          - skipped
+        x-order: D
   mcps.ToolDescriptor:
     type: object
     properties:

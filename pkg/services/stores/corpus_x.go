@@ -194,6 +194,7 @@ func (s *corpuStore) ProcessImportTask(ctx context.Context, task *corpus.ImportT
 				Line:   line,
 				Title:  importRowTitle(row),
 				Reason: "数据无效",
+				Kind:   corpus.ImportFailureKindFailed,
 			})
 			continue
 		}
@@ -212,6 +213,7 @@ func (s *corpuStore) ProcessImportTask(ctx context.Context, task *corpus.ImportT
 				Line:   line,
 				Title:  basic.Title,
 				Reason: "重复文档: title+heading 已存在，跳过",
+				Kind:   corpus.ImportFailureKindSkipped,
 			})
 		case errors.Is(err, ErrNotFound):
 			if _, cerr := s.CreateDocument(ctx, basic); cerr != nil {
@@ -220,6 +222,7 @@ func (s *corpuStore) ProcessImportTask(ctx context.Context, task *corpus.ImportT
 					Line:   line,
 					Title:  basic.Title,
 					Reason: cerr.Error(),
+					Kind:   corpus.ImportFailureKindFailed,
 				})
 			} else {
 				success++
@@ -230,6 +233,7 @@ func (s *corpuStore) ProcessImportTask(ctx context.Context, task *corpus.ImportT
 				Line:   line,
 				Title:  basic.Title,
 				Reason: err.Error(),
+				Kind:   corpus.ImportFailureKindFailed,
 			})
 		}
 	}
