@@ -51,15 +51,26 @@ func promptParts(ctx context.Context, sto promptStore, toolNames map[string]bool
 	return parts
 }
 
-// sessionConstants renders the values fixed for the life of a conversation. It
-// carries the user's display name only: the session id, the uid and the OID all
-// stay out — the model has no use for identifiers. Rendering last keeps a new
-// conversation or another user from invalidating the shared prefix ahead of it.
+// sessionConstants renders the values fixed for the life of a conversation. The
+// display name is what the model should call the user; when the platform gave
+// none (channel users whose nickname equals their login name, or is empty), the
+// login name stands in so the model still knows who it is talking to. The OID
+// and the session id stay out — the model has no use for identifiers. Rendering
+// last keeps a new conversation or another user from invalidating the shared
+// prefix ahead of it.
 func sessionConstants(ctx context.Context) string {
-	if user, ok := stores.UserFromContext(ctx); ok && user.Name != "" {
-		return "Current user: " + user.Name
+	user, ok := stores.UserFromContext(ctx)
+	if !ok {
+		return ""
 	}
-	return ""
+	name := user.Name
+	if name == "" {
+		name = user.UID
+	}
+	if name == "" {
+		return ""
+	}
+	return "Current user: " + name
 }
 
 // prepareSystemMessage resolves tool definitions and renders the stable system

@@ -110,13 +110,28 @@ func TestPromptPartsCarriesSessionConstantsLast(t *testing.T) {
 	}
 }
 
-func TestPromptPartsWithoutUserCarriesNoConstants(t *testing.T) {
-	cs := &fakeConversation{id: "s1", channel: "wecom"}
-
-	parts := promptParts(context.Background(), newFakePromptStore(), allTools(), nil, cs)
-
-	if parts.SessionConstants != "" {
-		t.Errorf("session constants = %q, want none", parts.SessionConstants)
+func TestPromptPartsResolvesUserName(t *testing.T) {
+	tests := []struct {
+		name string
+		user *auth.User
+		want string
+	}{
+		{"display name wins", &auth.User{OID: "1001", UID: "liutao", Name: "林涛"}, "Current user: 林涛"},
+		{"login name stands in when no display name", &auth.User{OID: "1002", UID: "wecom-zhangsan"}, "Current user: wecom-zhangsan"},
+		{"display name equal to login name renders once", &auth.User{OID: "1003", UID: "zhangsan", Name: "zhangsan"}, "Current user: zhangsan"},
+		{"no user, no constants", nil, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			if tt.user != nil {
+				ctx = auth.ContextWithUser(ctx, tt.user)
+			}
+			parts := promptParts(ctx, newFakePromptStore(), allTools(), nil, &fakeConversation{id: "s1"})
+			if parts.SessionConstants != tt.want {
+				t.Errorf("session constants = %q, want %q", parts.SessionConstants, tt.want)
+			}
+		})
 	}
 }
 
