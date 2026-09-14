@@ -37,6 +37,24 @@ enums:
     textMarshaler: true
     textUnmarshaler: true
 
+  - comment: 技能适用平台 位掩码（0=未声明，不参与平台门控）
+    name: Platform
+    type: int8
+    values:
+      - label: 未声明
+        suffix: None
+      - label: Linux
+        suffix: Linux
+      - label: macOS
+        suffix: Macos
+      - label: Windows
+        suffix: Windows
+    multiple: true
+    stringer: true
+    decodable: true
+    textMarshaler: true
+    textUnmarshaler: true
+
 dbcode: bun
 modelpkg: skills
 
@@ -56,7 +74,7 @@ models:
       - comment: 技能描述 做什么+何时用
         name: Description
         type: string
-        tags: {bson: 'description', json: 'description', pg: ',notnull,type:varchar(124)'}
+        tags: {bson: 'description', json: 'description', pg: ',notnull,type:text'}
         isset: true
       - comment: 正文
         name: Content
@@ -75,6 +93,42 @@ models:
         tags: {json: 'owner', pg: 'owner,notnull,type:bigint'}
         basic: true
         query: equal
+      - comment: 版本 取自 SKILL.md frontmatter version
+        name: Version
+        type: string
+        tags: {bson: 'version', json: 'version,omitempty', pg: ",notnull,type:varchar(32),default:''"}
+        isset: true
+      - comment: 作者 取自 SKILL.md frontmatter author
+        name: Author
+        type: string
+        tags: {bson: 'author', json: 'author,omitempty', pg: ",notnull,type:varchar(128),default:''"}
+        isset: true
+      - comment: 许可 取自 SKILL.md frontmatter license
+        name: License
+        type: string
+        tags: {bson: 'license', json: 'license,omitempty', pg: ",notnull,type:varchar(32),default:''"}
+        isset: true
+      - comment: 适用平台 位掩码（0=未声明，不参与平台门控）取自 frontmatter platforms
+        name: Platform
+        type: Platform
+        tags: {bson: 'platform', json: 'platform', pg: ',notnull,type:smallint,default:0'}
+        isset: true
+      - comment: 分类 取自 frontmatter metadata.hermes.category
+        name: Category
+        type: string
+        tags: {bson: 'category', json: 'category,omitempty', pg: ",notnull,type:varchar(32),default:''"}
+        isset: true
+        query: 'equal'
+      - comment: 主页 取自 frontmatter metadata.hermes.homepage
+        name: Homepage
+        type: string
+        tags: {bson: 'homepage', json: 'homepage,omitempty', pg: ",notnull,type:varchar(255),default:''"}
+        isset: true
+      - comment: 关联技能名 取自 frontmatter metadata.hermes.related_skills
+        name: RelatedSkills
+        type: '[]string'
+        tags: {bson: 'relatedSkills', json: 'relatedSkills,omitempty', pg: ",notnull,type:jsonb,default:'[]'"}
+        isset: true
       - type: comm.MetaField
     oidcat: file
     hooks:
@@ -131,7 +185,7 @@ stores:
     embed: SkillStoreX
     siname: Skill
     hods:
-      - { name: Skill, type: LGCUD }
+      - { name: Skill, type: LGCUD, export: CU }
       - { name: File, type: L }
 
 webcode: chi

@@ -1,8 +1,12 @@
 package api
 
 import (
+	"bytes"
 	"errors"
+	"io"
 	"net/http"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/cupogo/andvari/models/oid"
 	"github.com/cupogo/querybind"
@@ -30,6 +34,16 @@ type skillDetail struct {
 	Files skills.Files `json:"files"`
 }
 
+type skillImportIn struct {
+	Content string `json:"content"`
+}
+
+type skillImportResult struct {
+	ID          oid.OID `json:"id" swaggertype:"string"`
+	Name        string  `json:"name"`
+	Description string  `json:"description"`
+}
+
 func init() {
 	regHI(true, "GET", "/skills", "", func(a *api) http.HandlerFunc {
 		return a.listSkills
@@ -39,6 +53,9 @@ func init() {
 	})
 	regHI(true, "POST", "/skills", "", func(a *api) http.HandlerFunc {
 		return a.createSkill
+	})
+	regHI(true, "POST", "/skills/import", "", func(a *api) http.HandlerFunc {
+		return a.importSkill
 	})
 	regHI(true, "PUT", "/skills/{name}", "", func(a *api) http.HandlerFunc {
 		return a.updateSkill
@@ -148,6 +165,91 @@ func (a *api) createSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	success(w, r, idResult(obj.ID))
+}
+
+// importSkill 导入单个 SKILL.md：登录用户即可导入，归属强制当前用户，导入后为未投放（私有）。
+// 入参支持 multipart 的 file 字段或 JSON 的 content 字段。
+// @Tags 技能
+// @Summary 导入 SKILL.md
+// @Accept json,mpfd
+// @Produce json
+// @Param token header string true "登录票据凭证"
+// @Param body body skillImportIn false "Object，content 为 SKILL.md 正文"
+// @Param file formData file false "SKILL.md 文件"
+// @Success 200 {object} Done{result=skillImportResult}
+// @Failure 400 {object} Failure "请求或参数错误"
+// @Failure 401 {object} Failure "未登录"
+// @Failure 413 {object} Failure "文件过大"
+// @Failure 503 {object} Failure "服务端错误"
+// @Router /api/skills/import [post]
+func (a *api) importSkill(w http.ResponseWriter, r *http.Request) {
+	user, ok := stores.UserFromContext(r.Context())
+	if !ok {
+		fail(w, r, 401, errSkillNeedLogin)
+		return
+	}
+	content, code, err := readSkillImport(w, r)
+	if err != nil {
+		fail(w, r, code, err)
+		return
+	}
+	obj, err := a.sto.Skill().ImportSkillMD(r.Context(), content, stores.SkillImportOptions{})
+	if err != nil {
+		switch {
+		case errors.Is(err, stores.ErrDuplicate):
+			fail(w, r, 400, errors.New("skill name already exists"))
+		case errors.Is(err, skills.ErrFrontmatterMiss), errors.Is(err, skills.ErrInvalidName),
+			errors.Is(err, skills.ErrDescriptionLong), errors.Is(err, skills.ErrMetaTooLong),
+			errors.Is(err, stores.ErrSkillNeedOwner):
+			fail(w, r, 400, err)
+		default:
+			fail(w, r, 503, err)
+		}
+		return
+	}
+	logger().Info("skill imported", "name", obj.Name, "owner", user.UID)
+	success(w, r, skillImportResult{ID: obj.ID, Name: obj.Name, Description: obj.Description})
+}
+
+// readSkillImport 读取导入正文：multipart 的 file 字段或 JSON 的 content 字段。
+// 返回状态码以便调用方原样透出（413/400）。
+func readSkillImport(w http.ResponseWriter, r *http.Request) (content string, code int, err error) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxImportUploadSize)
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		file, _, err := r.FormFile("file")
+		if err != nil {
+			if isTooLarge(err) {
+				return "", 413, errors.New("file too large, max 10MiB")
+			}
+			return "", 400, errors.New("missing file field")
+		}
+		defer func() { _ = file.Close() }()
+		data, err := io.ReadAll(file)
+		if err != nil {
+			if isTooLarge(err) {
+				return "", 413, errors.New("file too large, max 10MiB")
+			}
+			return "", 400, err
+		}
+		if !utf8.Valid(data) {
+			return "", 400, errors.New("file must be UTF-8 encoded")
+		}
+		return string(bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))), 200, nil
+	}
+	var in skillImportIn
+	if err := binder.BindBody(r, &in); err != nil {
+		if isTooLarge(err) {
+			return "", 413, errors.New("content too large, max 10MiB")
+		}
+		return "", 400, err
+	}
+	if strings.TrimSpace(in.Content) == "" {
+		return "", 400, errors.New("missing content")
+	}
+	if !utf8.ValidString(in.Content) {
+		return "", 400, errors.New("content must be UTF-8 encoded")
+	}
+	return in.Content, 200, nil
 }
 
 // updateSkill 仅允许更新自己的技能；name 不可变更。

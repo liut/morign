@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -78,6 +80,33 @@ func (f *memSkillStore) CreateSkillWithFiles(ctx context.Context, in skills.Skil
 	}
 	f.setFiles(obj.Name, files)
 	return obj, nil
+}
+
+func (f *memSkillStore) ImportSkillMD(ctx context.Context, content string, opt stores.SkillImportOptions) (*skills.Skill, error) {
+	meta, _, ok := skills.Frontmatter(content)
+	if !ok {
+		return nil, skills.ErrFrontmatterMiss
+	}
+	if !skills.ValidName(meta.Name) {
+		return nil, skills.ErrInvalidName
+	}
+	owner := opt.Owner
+	if owner.IsZero() {
+		user, ok := stores.UserFromContext(ctx)
+		if !ok {
+			return nil, stores.ErrSkillNeedOwner
+		}
+		owner = oid.Cast(user.OID)
+	}
+	in := skills.SkillBasic{
+		Name:        meta.Name,
+		Description: meta.Description,
+		Content:     content,
+		Channel:     opt.Channel,
+		Owner:       owner,
+	}
+	meta.ApplyTo(&in)
+	return f.CreateSkill(ctx, in)
 }
 
 func (f *memSkillStore) UpdateSkill(ctx context.Context, id string, in skills.SkillSet) error {
@@ -181,6 +210,7 @@ func skillRouter(a *api) *chi.Mux {
 	r.Get("/api/skills", a.listSkills)
 	r.Get("/api/skills/{name}", a.getSkillByName)
 	r.Post("/api/skills", a.createSkill)
+	r.Post("/api/skills/import", a.importSkill)
 	r.Put("/api/skills/{name}", a.updateSkill)
 	r.Delete("/api/skills/{name}", a.deleteSkillByName)
 	return r
@@ -241,7 +271,8 @@ func TestSkillCreateAPIValidation(t *testing.T) {
 		{"bad name", `{"name":"PDF","description":"d","content":"---\nname: PDF\ndescription: d\n---\nbody"}`, 400},
 		{"missing frontmatter", `{"name":"invoice","description":"d","content":"plain"}`, 400},
 		{"frontmatter mismatch", `{"name":"invoice","description":"d","content":"---\nname: other\ndescription: d\n---\nbody"}`, 400},
-		{"long description", `{"name":"invoice","description":"` + strings.Repeat("a", 125) + `","content":"---\nname: invoice\ndescription: d\n---\nbody"}`, 400},
+		{"long description", `{"name":"invoice","description":"` + strings.Repeat("a", skills.MaxDescriptionLen+1) + `","content":"---\nname: invoice\ndescription: d\n---\nbody"}`, 400},
+		{"long version", `{"name":"invoice","description":"d","content":"---\nname: invoice\ndescription: d\nversion: ` + strings.Repeat("9", skills.MaxVersionLen+1) + `\n---\nbody"}`, 400},
 	}
 	for _, c := range cases {
 		rr := doSkillReq(r, http.MethodPost, "/api/skills", c.body, "o1")
@@ -251,6 +282,118 @@ func TestSkillCreateAPIValidation(t *testing.T) {
 	}
 	if len(fk.byName) != 0 {
 		t.Errorf("no skill should be stored, got %v", fk.byName)
+	}
+}
+
+func TestSkillImportAPI(t *testing.T) {
+	a, fk := skillAPI()
+	r := skillRouter(a)
+	content := "---\nname: invoice\ndescription: 开发票\nversion: 1.0.0\n---\n\n正文"
+	payload, err := json.Marshal(map[string]string{"content": content})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	rr := doSkillReq(r, http.MethodPost, "/api/skills/import", string(payload), "o1")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("import status = %d, body %s", rr.Code, rr.Body.String())
+	}
+	obj := fk.byName["invoice"]
+	if obj == nil {
+		t.Fatal("imported skill not stored")
+	}
+	if obj.Owner != oid.Cast("o1") {
+		t.Errorf("owner = %v, want current user", obj.Owner)
+	}
+	if obj.Channel != skills.ChannelNone {
+		t.Errorf("channel = %v, want unpublised (private)", obj.Channel)
+	}
+	if obj.Version != "1.0.0" {
+		t.Errorf("version = %q, want frontmatter value", obj.Version)
+	}
+}
+
+func TestSkillImportAPIMultipart(t *testing.T) {
+	a, fk := skillAPI()
+	r := skillRouter(a)
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, err := mw.CreateFormFile("file", "SKILL.md")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := fw.Write([]byte("---\nname: report\ndescription: 生成周报\n---\n\n正文")); err != nil {
+		t.Fatalf("write part: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/skills/import", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req = withUser(req, "o1")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("multipart import status = %d, body %s", rr.Code, rr.Body.String())
+	}
+	if fk.byName["report"] == nil {
+		t.Error("multipart import did not store skill")
+	}
+}
+
+func TestSkillImportAPIValidation(t *testing.T) {
+	a, fk := skillAPI()
+	r := skillRouter(a)
+	fk.byName["invoice"] = &skills.Skill{SkillBasic: skills.SkillBasic{
+		Name: "invoice", Description: "d",
+		Content: "---\nname: invoice\ndescription: d\n---\nbody", Owner: oid.Cast("o1"),
+	}}
+	cases := []struct {
+		name string
+		body string
+		want int
+	}{
+		{"missing content", `{}`, 400},
+		{"no frontmatter", `{"content":"plain"}`, 400},
+		{"bad name", `{"content":"---\nname: PDF\ndescription: d\n---\nb"}`, 400},
+		{"duplicate", `{"content":"---\nname: invoice\ndescription: d\n---\nb"}`, 400},
+	}
+	for _, c := range cases {
+		rr := doSkillReq(r, http.MethodPost, "/api/skills/import", c.body, "o1")
+		if got := respCode(t, rr); got != c.want {
+			t.Errorf("%s: code = %d, want %d (body %s)", c.name, got, c.want, rr.Body.String())
+		}
+	}
+	if len(fk.byName) != 1 {
+		t.Errorf("failed imports should not store skills, got %d", len(fk.byName))
+	}
+}
+
+func TestSkillImportAPITooLarge(t *testing.T) {
+	a, fk := skillAPI()
+	r := skillRouter(a)
+	body := `{"content":"` + strings.Repeat("a", maxImportUploadSize+1) + `"}`
+	rr := doSkillReq(r, http.MethodPost, "/api/skills/import", body, "o1")
+	if got := respCode(t, rr); got != http.StatusRequestEntityTooLarge {
+		t.Errorf("oversized import code = %d, want 413", got)
+	}
+	if len(fk.byName) != 0 {
+		t.Error("oversized import should not store a skill")
+	}
+}
+
+func TestSkillImportAPIUnauthorized(t *testing.T) {
+	a, _ := skillAPI()
+	r := skillRouter(a)
+	req := httptest.NewRequest(http.MethodPost, "/api/skills/import",
+		strings.NewReader(`{"content":"---\nname: invoice\ndescription: d\n---\nb"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+	if got := respCode(t, rr); got != http.StatusUnauthorized {
+		t.Errorf("unauthorized import code = %d, want 401", got)
 	}
 }
 
@@ -292,7 +435,7 @@ func TestSkillUpdateDeleteAPI(t *testing.T) {
 	}
 
 	// owner 更新超长描述 → 400
-	rr = doSkillReq(r, http.MethodPut, "/api/skills/invoice", `{"description":"`+strings.Repeat("a", 125)+`"}`, "o1")
+	rr = doSkillReq(r, http.MethodPut, "/api/skills/invoice", `{"description":"`+strings.Repeat("a", skills.MaxDescriptionLen+1)+`"}`, "o1")
 	if got := respCode(t, rr); got != http.StatusBadRequest {
 		t.Errorf("long description update code = %d, want 400", got)
 	}

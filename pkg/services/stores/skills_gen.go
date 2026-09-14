@@ -40,8 +40,10 @@ type SkillSpec struct {
 	Channel string `extensions:"x-order=B" form:"channel" json:"channel" swaggertype:"string"`
 	// 创建者 uid
 	Owner string `extensions:"x-order=C" form:"owner" json:"owner"`
+	// 分类 取自 frontmatter metadata.hermes.category
+	Category string `extensions:"x-order=D" form:"category" json:"category,omitempty"`
 	// 仅查看可见的
-	VisibleOnly bool `extensions:"x-order=D" form:"visible" json:"visible"`
+	VisibleOnly bool `extensions:"x-order=E" form:"visible" json:"visible"`
 }
 
 func (spec *SkillSpec) Sift(q *ormQuery) *ormQuery {
@@ -54,6 +56,7 @@ func (spec *SkillSpec) Sift(q *ormQuery) *ormQuery {
 		}
 	}
 	q, _ = siftOID(q, "owner", spec.Owner, false)
+	q, _ = siftEqual(q, "category", spec.Category, false)
 
 	return q
 }
@@ -94,29 +97,14 @@ func (s *skillStore) GetSkill(ctx context.Context, id string) (obj *skills.Skill
 }
 func (s *skillStore) CreateSkill(ctx context.Context, in skills.SkillBasic) (obj *skills.Skill, err error) {
 	err = s.w.db.RunInTx(ctx, nil, func(ctx context.Context, tx pgTx) (err error) {
-		obj = skills.NewSkillWithBasic(in)
-		if err = dbBeforeCreateSkill(ctx, tx, obj); err != nil {
-			return
-		}
-		if obj.Name == "" {
-			err = ErrEmptyKey
-			return
-		}
-		dbMetaUp(ctx, tx, obj)
-		err = dbInsert(ctx, tx, obj, "name")
+		obj, err = CreateSkill(ctx, tx, in)
 		return err
 	})
 	return
 }
 func (s *skillStore) UpdateSkill(ctx context.Context, id string, in skills.SkillSet) error {
-	exist := new(skills.Skill)
-	if err := dbGetWithPKID(ctx, s.w.db, exist, id); err != nil {
-		return err
-	}
-	exist.SetIsUpdate(true)
-	exist.SetWith(in)
-	dbMetaUp(ctx, s.w.db, exist)
-	return dbUpdate(ctx, s.w.db, exist)
+	_, err := UpdateSkill(ctx, s.w.db, id, in)
+	return err
 }
 func (s *skillStore) DeleteSkill(ctx context.Context, id string) error {
 	obj := new(skills.Skill)
@@ -137,5 +125,29 @@ func (s *skillStore) DeleteSkill(ctx context.Context, id string) error {
 
 func (s *skillStore) ListFile(ctx context.Context, spec *FileSpec) (data skills.Files, total int, err error) {
 	total, err = s.w.db.ListModel(ctx, spec, &data)
+	return
+}
+func CreateSkill(ctx context.Context, db ormDB, in skills.SkillBasic) (obj *skills.Skill, err error) {
+	obj = skills.NewSkillWithBasic(in)
+	if err = dbBeforeCreateSkill(ctx, db, obj); err != nil {
+		return
+	}
+	if obj.Name == "" {
+		err = ErrEmptyKey
+		return
+	}
+	dbMetaUp(ctx, db, obj)
+	err = dbInsert(ctx, db, obj, "name")
+	return
+}
+func UpdateSkill(ctx context.Context, db ormDB, id string, in skills.SkillSet) (exist *skills.Skill, err error) {
+	exist = new(skills.Skill)
+	if err = dbGetWithPKID(ctx, db, exist, id); err != nil {
+		return
+	}
+	exist.SetIsUpdate(true)
+	exist.SetWith(in)
+	dbMetaUp(ctx, db, exist)
+	err = dbUpdate(ctx, db, exist)
 	return
 }
