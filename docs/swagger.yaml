@@ -68,8 +68,13 @@ paths:
           description: 创建者 uid
           name: owner
           in: query
-        - type: boolean
+        - type: string
           x-order: D
+          description: 分类 取自 frontmatter metadata.hermes.category
+          name: category
+          in: query
+        - type: boolean
+          x-order: E
           description: 仅查看可见的
           name: visible
           in: query
@@ -2210,8 +2215,13 @@ paths:
           description: 创建者 uid
           name: owner
           in: query
-        - type: boolean
+        - type: string
           x-order: D
+          description: 分类 取自 frontmatter metadata.hermes.category
+          name: category
+          in: query
+        - type: boolean
+          x-order: E
           description: 仅查看可见的
           name: visible
           in: query
@@ -2302,6 +2312,57 @@ paths:
             $ref: '#/definitions/api.Failure'
         "401":
           description: 未登录
+          schema:
+            $ref: '#/definitions/api.Failure'
+        "503":
+          description: 服务端错误
+          schema:
+            $ref: '#/definitions/api.Failure'
+  /api/skills/import:
+    post:
+      consumes:
+        - application/json
+        - multipart/form-data
+      produces:
+        - application/json
+      tags:
+        - 技能
+      summary: 导入 SKILL.md
+      parameters:
+        - type: string
+          description: 登录票据凭证
+          name: token
+          in: header
+          required: true
+        - description: Object，content 为 SKILL.md 正文
+          name: body
+          in: body
+          schema:
+            $ref: '#/definitions/api.skillImportIn'
+        - type: file
+          description: SKILL.md 文件
+          name: file
+          in: formData
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+              - $ref: '#/definitions/api.Done'
+              - type: object
+                properties:
+                  result:
+                    $ref: '#/definitions/api.skillImportResult'
+        "400":
+          description: 请求或参数错误
+          schema:
+            $ref: '#/definitions/api.Failure'
+        "401":
+          description: 未登录
+          schema:
+            $ref: '#/definitions/api.Failure'
+        "413":
+          description: 文件过大
           schema:
             $ref: '#/definitions/api.Failure'
         "503":
@@ -2813,6 +2874,44 @@ definitions:
         description: 创建者 uid
         type: string
         x-order: E
+      version:
+        description: 版本 取自 SKILL.md frontmatter version
+        type: string
+        x-order: F
+      author:
+        description: 作者 取自 SKILL.md frontmatter author
+        type: string
+        x-order: G
+      license:
+        description: 许可 取自 SKILL.md frontmatter license
+        type: string
+        x-order: H
+      platform:
+        description: |-
+          适用平台 位掩码（0=未声明，不参与平台门控）取自 frontmatter platforms
+           * `linux`
+           * `macos` - macOS
+           * `windows`
+        type: string
+        enum:
+          - linux
+          - macos
+          - windows
+        x-order: I
+      category:
+        description: 分类 取自 frontmatter metadata.hermes.category
+        type: string
+        x-order: J
+      homepage:
+        description: 主页 取自 frontmatter metadata.hermes.homepage
+        type: string
+        x-order: K
+      relatedSkills:
+        description: 关联技能名 取自 frontmatter metadata.hermes.related_skills
+        type: array
+        items:
+          type: string
+        x-order: L
       files:
         type: object
         additionalProperties:
@@ -2862,6 +2961,44 @@ definitions:
         description: 创建者 uid
         type: string
         x-order: E
+      version:
+        description: 版本 取自 SKILL.md frontmatter version
+        type: string
+        x-order: F
+      author:
+        description: 作者 取自 SKILL.md frontmatter author
+        type: string
+        x-order: G
+      license:
+        description: 许可 取自 SKILL.md frontmatter license
+        type: string
+        x-order: H
+      platform:
+        description: |-
+          适用平台 位掩码（0=未声明，不参与平台门控）取自 frontmatter platforms
+           * `linux`
+           * `macos` - macOS
+           * `windows`
+        type: string
+        enum:
+          - linux
+          - macos
+          - windows
+        x-order: I
+      category:
+        description: 分类 取自 frontmatter metadata.hermes.category
+        type: string
+        x-order: J
+      homepage:
+        description: 主页 取自 frontmatter metadata.hermes.homepage
+        type: string
+        x-order: K
+      relatedSkills:
+        description: 关联技能名 取自 frontmatter metadata.hermes.related_skills
+        type: array
+        items:
+          type: string
+        x-order: L
       creatorID:
         description: 创建者ID
         type: string
@@ -2875,6 +3012,20 @@ definitions:
         type: array
         items:
           $ref: '#/definitions/skillsFile'
+  api.skillImportIn:
+    type: object
+    properties:
+      content:
+        type: string
+  api.skillImportResult:
+    type: object
+    properties:
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
   api.skillUpdateIn:
     type: object
     properties:
@@ -2902,6 +3053,44 @@ definitions:
           - wecom
           - feishu
         x-order: D
+      version:
+        description: 版本 取自 SKILL.md frontmatter version
+        type: string
+        x-order: E
+      author:
+        description: 作者 取自 SKILL.md frontmatter author
+        type: string
+        x-order: F
+      license:
+        description: 许可 取自 SKILL.md frontmatter license
+        type: string
+        x-order: G
+      platform:
+        description: |-
+          适用平台 位掩码（0=未声明，不参与平台门控）取自 frontmatter platforms
+           * `linux`
+           * `macos` - macOS
+           * `windows`
+        type: string
+        enum:
+          - linux
+          - macos
+          - windows
+        x-order: H
+      category:
+        description: 分类 取自 frontmatter metadata.hermes.category
+        type: string
+        x-order: I
+      homepage:
+        description: 主页 取自 frontmatter metadata.hermes.homepage
+        type: string
+        x-order: J
+      relatedSkills:
+        description: 关联技能名 取自 frontmatter metadata.hermes.related_skills
+        type: array
+        items:
+          type: string
+        x-order: K
       files:
         type: object
         additionalProperties:
@@ -3544,6 +3733,44 @@ definitions:
         description: 创建者 uid
         type: string
         x-order: E
+      version:
+        description: 版本 取自 SKILL.md frontmatter version
+        type: string
+        x-order: F
+      author:
+        description: 作者 取自 SKILL.md frontmatter author
+        type: string
+        x-order: G
+      license:
+        description: 许可 取自 SKILL.md frontmatter license
+        type: string
+        x-order: H
+      platform:
+        description: |-
+          适用平台 位掩码（0=未声明，不参与平台门控）取自 frontmatter platforms
+           * `linux`
+           * `macos` - macOS
+           * `windows`
+        type: string
+        enum:
+          - linux
+          - macos
+          - windows
+        x-order: I
+      category:
+        description: 分类 取自 frontmatter metadata.hermes.category
+        type: string
+        x-order: J
+      homepage:
+        description: 主页 取自 frontmatter metadata.hermes.homepage
+        type: string
+        x-order: K
+      relatedSkills:
+        description: 关联技能名 取自 frontmatter metadata.hermes.related_skills
+        type: array
+        items:
+          type: string
+        x-order: L
       creatorID:
         description: 创建者ID
         type: string
@@ -3586,6 +3813,44 @@ definitions:
         description: 创建者 uid
         type: string
         x-order: E
+      version:
+        description: 版本 取自 SKILL.md frontmatter version
+        type: string
+        x-order: F
+      author:
+        description: 作者 取自 SKILL.md frontmatter author
+        type: string
+        x-order: G
+      license:
+        description: 许可 取自 SKILL.md frontmatter license
+        type: string
+        x-order: H
+      platform:
+        description: |-
+          适用平台 位掩码（0=未声明，不参与平台门控）取自 frontmatter platforms
+           * `linux`
+           * `macos` - macOS
+           * `windows`
+        type: string
+        enum:
+          - linux
+          - macos
+          - windows
+        x-order: I
+      category:
+        description: 分类 取自 frontmatter metadata.hermes.category
+        type: string
+        x-order: J
+      homepage:
+        description: 主页 取自 frontmatter metadata.hermes.homepage
+        type: string
+        x-order: K
+      relatedSkills:
+        description: 关联技能名 取自 frontmatter metadata.hermes.related_skills
+        type: array
+        items:
+          type: string
+        x-order: L
   skillsSkillSet:
     type: object
     properties:
@@ -3613,3 +3878,41 @@ definitions:
           - wecom
           - feishu
         x-order: D
+      version:
+        description: 版本 取自 SKILL.md frontmatter version
+        type: string
+        x-order: E
+      author:
+        description: 作者 取自 SKILL.md frontmatter author
+        type: string
+        x-order: F
+      license:
+        description: 许可 取自 SKILL.md frontmatter license
+        type: string
+        x-order: G
+      platform:
+        description: |-
+          适用平台 位掩码（0=未声明，不参与平台门控）取自 frontmatter platforms
+           * `linux`
+           * `macos` - macOS
+           * `windows`
+        type: string
+        enum:
+          - linux
+          - macos
+          - windows
+        x-order: H
+      category:
+        description: 分类 取自 frontmatter metadata.hermes.category
+        type: string
+        x-order: I
+      homepage:
+        description: 主页 取自 frontmatter metadata.hermes.homepage
+        type: string
+        x-order: J
+      relatedSkills:
+        description: 关联技能名 取自 frontmatter metadata.hermes.related_skills
+        type: array
+        items:
+          type: string
+        x-order: K

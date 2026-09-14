@@ -22,12 +22,22 @@ type SkillStoreX interface {
 	LoadForName(ctx context.Context, name string) (*skills.Skill, error)
 	CreateSkillWithFiles(ctx context.Context, in skills.SkillBasic, files map[string]string) (obj *skills.Skill, err error)
 	UpdateSkillWithFiles(ctx context.Context, id string, set skills.SkillSet, files map[string]string) error
+	ImportSkillMD(ctx context.Context, content string, opt SkillImportOptions) (*skills.Skill, error)
 	ListFileNames(ctx context.Context, name string) (skills.Files, error)
 	ReadFile(ctx context.Context, name, path string) (*skills.File, error)
 }
 
 var ErrSkillNotFound = errors.New("skill not found")
 var ErrFileNotFound = errors.New("file not found")
+
+// ErrSkillNeedOwner 导入时既无上下文用户也未指定归属（CLI 必须显式给出归属）。
+var ErrSkillNeedOwner = errors.New("skill owner required")
+
+// SkillImportOptions 导入的可选覆盖项；零值表示用上下文用户与未投放（私有）。
+type SkillImportOptions struct {
+	Owner   oid.OID
+	Channel skills.Channel
+}
 
 const (
 	maxSkillFileSize   = 1 << 20  // 单文件大小上限 1MB
@@ -160,22 +170,64 @@ func (s *skillStore) ReadFile(ctx context.Context, name, path string) (*skills.F
 	return file, nil
 }
 
+// ImportSkillMD 按 SKILL.md 正文导入技能：name/description 与元数据以 frontmatter 为权威，
+// 调用方无需（也无法）另外指定名称与描述。同名冲突返回 ErrDuplicate，不覆盖既有行。
+// 资源文件不在本期范围（.zip/.skill 与目录导入随下一期一并设计）。
+func (s *skillStore) ImportSkillMD(ctx context.Context, content string, opt SkillImportOptions) (*skills.Skill, error) {
+	// Frontmatter 仅切一次：拿 meta 校验、把 body 落库为 Skill.Content。
+	// Skill.Content 不再含 YAML frontmatter。
+	meta, body, ok := skills.Frontmatter(content)
+	if !ok {
+		return nil, skills.ErrFrontmatterMiss
+	}
+	if !skills.ValidName(meta.Name) {
+		return nil, skills.ErrInvalidName
+	}
+	if !skills.ValidDescription(meta.Description) {
+		return nil, skills.ErrDescriptionLong
+	}
+	if err := meta.Validate(); err != nil {
+		return nil, err
+	}
+	owner := opt.Owner
+	if owner.IsZero() {
+		user, ok := UserFromContext(ctx)
+		if !ok {
+			return nil, ErrSkillNeedOwner
+		}
+		owner = oid.Cast(user.OID)
+	}
+	// 创建路径是 ON CONFLICT (name) DO UPDATE（仅更新 updated），不会报冲突；
+	// 导入要求同名不覆盖，所以这里显式判存在。并发导入同名时后者会落在同一行上，
+	// 结果仍是既有行而非覆盖，符合「不覆盖」的语义。
+	exists, err := s.w.db.NewSelect().Model((*skills.Skill)(nil)).Where("name = ?", meta.Name).Exists(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if exists {
+		return nil, ErrDuplicate
+	}
+	in := skills.SkillBasic{
+		Name:        meta.Name,
+		Description: meta.Description,
+		Content:     body,
+		Channel:     opt.Channel,
+		Owner:       owner,
+	}
+	// 七列元数据由 frontmatter 镜像到 in，避免依赖 CreateSkillWithFiles 内
+	// 再次解析 in.Content（此时已是 body，无 frontmatter）。
+	meta.ApplyTo(&in)
+	return s.CreateSkillWithFiles(ctx, in, nil)
+}
+
 // CreateSkillWithFiles 创建技能并在同一事务内写入资源文件（与生成 CreateSkill 同逻辑，扩为 bundle 原子写）。
 func (s *skillStore) CreateSkillWithFiles(ctx context.Context, in skills.SkillBasic, files map[string]string) (obj *skills.Skill, err error) {
 	if err = checkSkillFiles(files); err != nil {
 		return nil, err
 	}
 	err = s.w.db.RunInTx(ctx, nil, func(ctx context.Context, tx pgTx) (err error) {
-		obj = skills.NewSkillWithBasic(in)
-		if err = dbBeforeCreateSkill(ctx, tx, obj); err != nil {
-			return
-		}
-		if obj.Name == "" {
-			err = ErrEmptyKey
-			return
-		}
-		dbMetaUp(ctx, tx, obj)
-		if err = dbInsert(ctx, tx, obj, "name"); err != nil {
+		// 七列元数据由调用方在入参 SkillBasic 里填好；store 不再二次解析 Content。
+		if obj, err = CreateSkill(ctx, tx, in); err != nil {
 			return
 		}
 		return upsertSkillFiles(ctx, tx, obj.ID, files)
@@ -195,6 +247,7 @@ func (s *skillStore) UpdateSkillWithFiles(ctx context.Context, id string, set sk
 		if err = dbGetWithPKID(ctx, tx, exist, id); err != nil {
 			return
 		}
+		// 七列元数据由调用方在入参 SkillSet 里填好；store 不再二次解析 Content。
 		exist.SetIsUpdate(true)
 		exist.SetWith(set)
 		dbMetaUp(ctx, tx, exist)

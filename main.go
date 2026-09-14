@@ -14,14 +14,17 @@ import (
 
 	"github.com/urfave/cli/v2"
 
+	"github.com/cupogo/andvari/models/oid"
+
 	"github.com/liut/morign/htdocs"
+	"github.com/liut/morign/pkg/models/skills"
 	svcagent "github.com/liut/morign/pkg/services/agent"
-	_ "github.com/liut/morign/pkg/web/api" // 触发 api 包的 init() 注册路由
 	"github.com/liut/morign/pkg/services/llm"
 	"github.com/liut/morign/pkg/services/stores"
 	"github.com/liut/morign/pkg/services/tools"
 	"github.com/liut/morign/pkg/settings"
 	"github.com/liut/morign/pkg/web"
+	_ "github.com/liut/morign/pkg/web/api" // 触发 api 包的 init() 注册路由
 )
 
 const (
@@ -62,6 +65,44 @@ func importDocs(cc *cli.Context) error {
 		logger().Warn("import fail", "input", input, "err", err)
 		return err
 	}
+	return nil
+}
+
+// importSkillMD 导入单个 SKILL.md：归属与投放频道可指定，未指定归属时用上下文的登录用户。
+func importSkillMD(cc *cli.Context) error {
+	input := cc.Args().First()
+	if input == "" {
+		return fmt.Errorf("a SKILL.md path is required")
+	}
+	data, err := os.ReadFile(input)
+	if err != nil {
+		logger().Warn("read fail", "input", input, "err", err)
+		return err
+	}
+	var opt stores.SkillImportOptions
+	if s := cc.String("owner"); s != "" {
+		u, uerr := stores.Sgt().Convo().GetUser(cc.Context, s)
+		if uerr != nil {
+			logger().Warn("resolve owner fail", "owner", s, "err", uerr)
+			return fmt.Errorf("owner %q not found: %w", s, uerr)
+		}
+		opt.Owner = oid.Cast(u.GetOID())
+	}
+	if s := cc.String("channel"); s != "" {
+		opt.Channel, err = skills.ParseChannels(s)
+		if err != nil {
+			logger().Warn("parse channel fail", "channel", s, "err", err)
+			return err
+		}
+	}
+	obj, err := stores.Sgt().Skill().ImportSkillMD(cc.Context, string(data), opt)
+	if err != nil {
+		logger().Warn("import skill fail", "input", input, "err", err)
+		return fmt.Errorf("import %s: %w", input, err)
+	}
+	logger().Info("skill imported",
+		"name", obj.Name, "id", obj.ID.String(),
+		"owner", obj.Owner.String(), "channel", obj.Channel.String())
 	return nil
 }
 
@@ -333,6 +374,15 @@ func main() {
 				Flags: []cli.Flag{
 					&cli.StringFlag{Name: "diff", Aliases: []string{"diff-log"}, Value: "", Usage: "a filename of diff"},
 					&cli.StringFlag{Name: "mark-missing", Value: "", Usage: "mark capabilities whose endpoint matches prefix but not in imported file as missed"},
+				},
+			},
+			{
+				Name:   "import-skill",
+				Usage:  "import a skill from a SKILL.md file",
+				Action: importSkillMD,
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: "owner", Value: "", Usage: "owner username or oid; resolved against the user table (required when there is no logged-in user)"},
+					&cli.StringFlag{Name: "channel", Value: "", Usage: "publish to channels: web,wecom,feishu (default private)"},
 				},
 			},
 			{
