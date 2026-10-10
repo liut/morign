@@ -172,6 +172,14 @@ func (spec *ConvoMemorySpec) Sift(q *ormQuery) *ormQuery {
 
 	return q
 }
+func (spec *ConvoMemorySpec) CanSort(k string) bool {
+	switch k {
+	case "key":
+		return true
+	default:
+		return spec.ModelSpec.CanSort(k)
+	}
+}
 
 type ConvoUsageRecordSpec struct {
 	PageSpec
@@ -302,31 +310,56 @@ func (s *convoStore) ListMemory(ctx context.Context, spec *ConvoMemorySpec) (dat
 func (s *convoStore) GetMemory(ctx context.Context, id string) (obj *convo.Memory, err error) {
 	obj = new(convo.Memory)
 	err = dbGetWithPKID(ctx, s.w.db, obj, id)
-
+	if err == nil {
+		err = s.afterLoadMemory(ctx, obj)
+	}
 	return
 }
 func (s *convoStore) CreateMemory(ctx context.Context, in convo.MemoryBasic) (obj *convo.Memory, err error) {
-	obj = convo.NewMemoryWithBasic(in)
-	dbMetaUp(ctx, s.w.db, obj)
-	err = dbInsert(ctx, s.w.db, obj)
+	err = s.w.db.RunInTx(ctx, nil, func(ctx context.Context, tx pgTx) (err error) {
+		obj = convo.NewMemoryWithBasic(in)
+		if err = dbBeforeCreateMemory(ctx, tx, obj); err != nil {
+			return
+		}
+		dbMetaUp(ctx, tx, obj)
+		err = dbInsert(ctx, tx, obj)
+		return err
+	})
 	if err == nil {
 		err = s.afterCreatedMemory(ctx, obj)
 	}
 	return
 }
 func (s *convoStore) UpdateMemory(ctx context.Context, id string, in convo.MemorySet) error {
-	exist := new(convo.Memory)
-	if err := dbGetWithPKID(ctx, s.w.db, exist, id); err != nil {
-		return err
-	}
-	exist.SetIsUpdate(true)
-	exist.SetWith(in)
-	dbMetaUp(ctx, s.w.db, exist)
-	return dbUpdate(ctx, s.w.db, exist)
+	return s.w.db.RunInTx(ctx, nil, func(ctx context.Context, tx pgTx) (err error) {
+		exist := new(convo.Memory)
+		if err = dbGetWithPKID(ctx, tx, exist, id); err != nil {
+			return err
+		}
+		exist.SetIsUpdate(true)
+		exist.SetWith(in)
+		if err = dbBeforeUpdateMemory(ctx, tx, exist); err != nil {
+			return err
+		}
+		dbMetaUp(ctx, tx, exist)
+		return dbUpdate(ctx, tx, exist)
+	})
 }
 func (s *convoStore) DeleteMemory(ctx context.Context, id string) error {
 	obj := new(convo.Memory)
-	return s.w.db.DeleteModel(ctx, obj, id)
+	if err := dbGetWithPKID(ctx, s.w.db, obj, id); err != nil {
+		if errorIs(err, ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	return s.w.db.RunInTx(ctx, nil, func(ctx context.Context, tx pgTx) (err error) {
+		if err = dbBeforeDeleteMemory(ctx, tx, obj); err != nil {
+			return
+		}
+		err = dbDeleteM(ctx, tx, s.w.db.Schema(), s.w.db.SchemaCrap(), obj)
+		return
+	})
 }
 
 func (s *convoStore) ListUsageRecord(ctx context.Context, spec *ConvoUsageRecordSpec) (data convo.UsageRecords, total int, err error) {

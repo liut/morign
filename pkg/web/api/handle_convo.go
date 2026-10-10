@@ -3,12 +3,14 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/cupogo/querybind"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/render"
 	"github.com/jpillora/eventsource"
@@ -43,6 +45,21 @@ func init() {
 	})
 	regHI(true, "PATCH", "/conversation/{csid}/title", "", func(a *api) http.HandlerFunc {
 		return a.patchConversationTitle
+	})
+	regHI(true, "GET", "/memories", "", func(a *api) http.HandlerFunc {
+		return a.getConvoMemories
+	})
+	regHI(true, "GET", "/memories/{id}", "", func(a *api) http.HandlerFunc {
+		return a.getConvoMemory
+	})
+	regHI(true, "POST", "/memories", "", func(a *api) http.HandlerFunc {
+		return a.postConvoMemory
+	})
+	regHI(true, "PUT", "/memories/{id}", "", func(a *api) http.HandlerFunc {
+		return a.putConvoMemory
+	})
+	regHI(true, "DELETE", "/memories/{id}", "", func(a *api) http.HandlerFunc {
+		return a.deleteConvoMemory
 	})
 }
 
@@ -470,4 +487,156 @@ func convertToolCallsForJSON(tcs []llm.ToolCall) []map[string]any {
 		}
 	}
 	return result
+}
+
+// failStoreErr 把存储层的拒绝映射为 403、把未找到映射为 404，其余按 503 处理。
+func failStoreErr(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, stores.ErrForbidden):
+		fail(w, r, 403, err)
+	case errors.Is(err, stores.ErrNotFound):
+		fail(w, r, 404, err)
+	default:
+		fail(w, r, 503, err)
+	}
+}
+
+// @Tags Memory
+// @ID convo-memories-get
+// @Summary 查询 记忆 列表 🔑
+// @Accept json
+// @Produce json
+// @Param token    header   string  true "登录票据凭证"
+// @Param   query  query   stores.ConvoMemorySpec  true   "Object"
+// @Success 200 {object} Done{result=ResultData{data=convo.Memories}}
+// @Failure 400 {object} Failure "请求或参数错误"
+// @Failure 401 {object} Failure "未登录"
+// @Failure 404 {object} Failure "目标未找到"
+// @Failure 503 {object} Failure "服务端错误"
+// @Router /api/convo/memories [get]
+func (a *api) getConvoMemories(w http.ResponseWriter, r *http.Request) {
+	var spec stores.ConvoMemorySpec
+	if err := querybind.Bind(&spec, r.URL.Query()); err != nil {
+		fail(w, r, 400, err)
+		return
+	}
+
+	ctx := r.Context()
+	data, total, err := a.sto.Convo().ListMemory(ctx, &spec)
+	if err != nil {
+		fail(w, r, 503, err)
+		return
+	}
+
+	success(w, r, dtResult(data, total))
+}
+
+// @Tags Memory
+// @ID convo-memories-id-get
+// @Summary 获取 记忆 详情 🔑
+// @Accept json
+// @Produce json
+// @Param token    header   string  true "登录票据凭证"
+// @Param   id    path   string  true   "编号"
+// @Success 200 {object} Done{result=convo.Memory}
+// @Failure 400 {object} Failure "请求或参数错误"
+// @Failure 401 {object} Failure "未登录"
+// @Failure 404 {object} Failure "目标未找到"
+// @Failure 503 {object} Failure "服务端错误"
+// @Router /api/convo/memories/{id} [get]
+func (a *api) getConvoMemory(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var obj *convo.Memory
+	var err error
+	obj, err = a.sto.Convo().GetMemory(r.Context(), id)
+	if err != nil {
+		failStoreErr(w, r, err)
+		return
+	}
+
+	success(w, r, obj)
+}
+
+// @Tags Memory
+// @ID convo-memories-post
+// @Summary 录入 记忆 🔑
+// @Accept json,mpfd
+// @Produce json
+// @Param token    header   string  true "登录票据凭证"
+// @Param   query  body   convo.MemoryBasic  true   "Object"
+// @Success 200 {object} Done{result=ResultID}
+// @Failure 400 {object} Failure "请求或参数错误"
+// @Failure 401 {object} Failure "未登录"
+// @Failure 403 {object} Failure "无权限"
+// @Failure 503 {object} Failure "服务端错误"
+// @Router /api/convo/memories [post]
+func (a *api) postConvoMemory(w http.ResponseWriter, r *http.Request) {
+	var in convo.MemoryBasic
+	if err := binder.BindBody(r, &in); err != nil {
+		fail(w, r, 400, err)
+		return
+	}
+
+	obj, err := a.sto.Convo().CreateMemory(r.Context(), in)
+	if err != nil {
+		fail(w, r, 503, err)
+		return
+	}
+
+	success(w, r, idResult(obj.ID))
+}
+
+// @Tags Memory
+// @ID convo-memories-id-put
+// @Summary 更新 记忆 🔑
+// @Accept json,mpfd
+// @Produce json
+// @Param token    header   string  true "登录票据凭证"
+// @Param   id    path   string  true   "编号"
+// @Param   query  body   convo.MemorySet  true   "Object"
+// @Success 200 {object} Done{result=string}
+// @Failure 400 {object} Failure "请求或参数错误"
+// @Failure 401 {object} Failure "未登录"
+// @Failure 403 {object} Failure "无权限"
+// @Failure 503 {object} Failure "服务端错误"
+// @Router /api/convo/memories/{id} [put]
+func (a *api) putConvoMemory(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var in convo.MemorySet
+	if err := binder.BindBody(r, &in); err != nil {
+		fail(w, r, 400, err)
+		return
+	}
+
+	err := a.sto.Convo().UpdateMemory(r.Context(), id, in)
+	if err != nil {
+		failStoreErr(w, r, err)
+		return
+	}
+
+	success(w, r, "ok")
+}
+
+// @Tags Memory
+// @ID convo-memories-id-delete
+// @Summary 删除 记忆 🔑
+// @Accept json
+// @Produce json
+// @Param token    header   string  true "登录票据凭证"
+// @Param   id    path   string  true   "编号"
+// @Success 200 {object} Done
+// @Failure 400 {object} Failure "请求或参数错误"
+// @Failure 401 {object} Failure "未登录"
+// @Failure 403 {object} Failure "无权限"
+// @Failure 503 {object} Failure "服务端错误"
+// @Router /api/convo/memories/{id} [delete]
+func (a *api) deleteConvoMemory(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	err := a.sto.Convo().DeleteMemory(r.Context(), id)
+	if err != nil {
+		failStoreErr(w, r, err)
+		return
+	}
+
+	success(w, r, "ok")
 }
