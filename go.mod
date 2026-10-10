@@ -1,6 +1,6 @@
 module github.com/liut/morign
 
-go 1.25.0
+go 1.26.0
 
 require (
 	codeberg.org/readeck/go-readability/v2 v2.1.1
@@ -17,13 +17,13 @@ require (
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/larksuite/oapi-sdk-go/v3 v3.5.3
 	github.com/liut/simpauth v0.1.20
-	github.com/liut/staffio-client v0.2.12
+	github.com/liut/staffio-client v0.3.0
 	github.com/marcsv/go-binder v0.0.0-20160121205837-a8bae0b66e09
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/pmezard/go-difflib v1.0.0
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/spf13/cast v1.10.0
-	github.com/stretchr/testify v1.11.1
+	github.com/stretchr/testify v1.12.1
 	github.com/ulule/limiter/v3 v3.11.2
 	github.com/uptrace/bun v1.2.18
 	github.com/uptrace/bun/dialect/pgdialect v1.2.18
@@ -40,7 +40,6 @@ require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.7 // indirect
-	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
@@ -55,7 +54,7 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/puzpuzpuz/xsync/v3 v3.5.1 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
-	github.com/tinylib/msgp v1.6.3 // indirect
+	github.com/tinylib/msgp v1.6.5 // indirect
 	github.com/tmthrgd/go-hex v0.0.0-20190904060850-447a3041c3bc // indirect
 	github.com/uptrace/bun/driver/pgdriver v1.2.18 // indirect
 	github.com/uptrace/bun/extra/bunotel v1.2.18 // indirect
@@ -72,8 +71,9 @@ require (
 	go.opentelemetry.io/otel/metric v1.42.0 // indirect
 	go.opentelemetry.io/otel/trace v1.42.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.49.0 // indirect
-	golang.org/x/oauth2 v0.36.0 // indirect
+	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 	mellium.im/sasl v0.3.2 // indirect
 )
