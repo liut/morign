@@ -35,6 +35,39 @@ type ConvoStoreX interface {
 
 const defaultMemoryLimit = 5
 const maxMemoryLimit = 100
+const defaultMemoryPageLimit = 20
+
+// ErrForbidden 请求者无权访问目标对象。
+var ErrForbidden = errors.New("forbidden")
+
+// restrictedToOwner 报告归属收窄是否作用于当前请求：存在登录身份且请求者不是 keeper。
+// 无登录上下文的内部调用（向量同步、CLI）保持跨用户遍历。
+func restrictedToOwner(ctx context.Context) bool {
+	_, ok := UserFromContext(ctx)
+	return ok && !IsKeeper(ctx)
+}
+
+// ownerIDFromContext 返回登录用户的归属编号；无登录身份或编号非法时返回 false。
+func ownerIDFromContext(ctx context.Context) (oid.OID, bool) {
+	user, ok := UserFromContext(ctx)
+	if !ok {
+		return oid.ZeroID, false
+	}
+	id := oid.Cast(user.OID)
+	if !id.Valid() {
+		return oid.ZeroID, false
+	}
+	return id, true
+}
+
+// ownerAllowed 判断给定归属是否对请求者放行；未收窄时一律放行。
+func ownerAllowed(ctx context.Context, owner oid.OID) bool {
+	if !restrictedToOwner(ctx) {
+		return true
+	}
+	id, ok := ownerIDFromContext(ctx)
+	return ok && owner == id
+}
 
 // SaveSession saves the session to database
 func (s *convoStore) SaveSession(ctx context.Context, obj *convo.Session) error {
@@ -195,21 +228,38 @@ func (spec *ConvoMemorySpec) SiftX(ctx context.Context, q *ormQuery) *ormQuery {
 	if !spec.IsFull {
 		q.ExcludeColumn("content")
 	}
-	if spec.IsOwner {
-		user, uok := UserFromContext(ctx)
-		if !uok {
-			logger().Info("need login when query owner memories")
-			return q.Where("FALSE")
-		}
-		spec.OwnerID = user.OID
-		if spec.Limit == 0 {
-			spec.Limit = defaultMemoryLimit
-		}
+	if !spec.applyOwnerScope(ctx) {
+		return q.Where("FALSE")
 	}
 	if len(spec.Sort) == 0 {
 		spec.Sort = "created DESC"
 	}
 	return q
+}
+
+// applyOwnerScope 按请求者身份收窄列表归属并补齐分页默认值。
+// 返回 false 表示登录身份非法，列表应为空。
+func (spec *ConvoMemorySpec) applyOwnerScope(ctx context.Context) bool {
+	if _, ok := UserFromContext(ctx); ok && spec.Limit == 0 {
+		spec.Limit = defaultMemoryPageLimit
+	}
+	switch {
+	case restrictedToOwner(ctx):
+		// 普通用户：忽略入参，强制按本人归属
+		id, ok := ownerIDFromContext(ctx)
+		if !ok {
+			return false
+		}
+		spec.OwnerID = id.String()
+	case IsKeeper(ctx) && spec.OwnerID == "" && spec.IsOwner:
+		// keeper：ownerID 优先，其次 own=true 只看自己，都不传为全站
+		id, ok := ownerIDFromContext(ctx)
+		if !ok {
+			return false
+		}
+		spec.OwnerID = id.String()
+	}
+	return true
 }
 
 func (s *convoStore) ListMyMomory(ctx context.Context, spec *ConvoMemorySpec) (convo.Memories, error) {
@@ -222,7 +272,8 @@ func (s *convoStore) ListMyMomory(ctx context.Context, spec *ConvoMemorySpec) (c
 	return data, err
 }
 
-// MatchMemories matches memories using vector similarity
+// MatchMemories matches memories using vector similarity.
+// 回查走 ConvoMemorySpec.SiftX，归属收窄与列表路径共用同一规则。
 func (s *convoStore) MatchMemories(ctx context.Context, ms MatchSpec) (data convo.Memories, err error) {
 	ms.setDefaults()
 
@@ -532,12 +583,6 @@ func (s *convoStore) InvokerForMemoryForget() mcps.Invoker {
 			}), nil
 		}
 
-		// Clean up vector entry
-		if _, err := s.w.db.NewDelete().Model((*corpus.DocVector)(nil)).
-			Where("doc_id = ?", existing.ID).Exec(ctx); err != nil {
-			logger().Info("delete memory vector fail", "id", existing.ID, "err", err)
-		}
-
 		if err := s.DeleteMemory(ctx, existing.StringID()); err != nil {
 			return mcps.BuildToolErrorResult(err.Error()), nil
 		}
@@ -592,4 +637,40 @@ func (s *convoStore) reinforceMemory(ctx context.Context, m convo.Memory) {
 	if err := dbUpdate(ctx, s.w.db, &m); err != nil {
 		logger().Info("reinforce memory fail", "id", m.ID, "err", err)
 	}
+}
+
+// dbBeforeCreateMemory 由登录身份决定归属，请求体指定的归属不生效。
+func dbBeforeCreateMemory(ctx context.Context, db ormDB, obj *convo.Memory) error {
+	if id, ok := ownerIDFromContext(ctx); ok {
+		obj.SetOwnerID(id)
+	}
+	return nil
+}
+
+// dbBeforeUpdateMemory 拒绝非本人且非 keeper 的修订。
+func dbBeforeUpdateMemory(ctx context.Context, db ormDB, obj *convo.Memory) error {
+	if !ownerAllowed(ctx, obj.OwnerID) {
+		return ErrForbidden
+	}
+	return nil
+}
+
+// dbBeforeDeleteMemory 拒绝非本人且非 keeper 的删除，放行后清理该记忆的向量。
+func dbBeforeDeleteMemory(ctx context.Context, db ormDB, obj *convo.Memory) error {
+	if !ownerAllowed(ctx, obj.OwnerID) {
+		return ErrForbidden
+	}
+	if _, err := db.NewDelete().Model((*corpus.DocVector)(nil)).
+		Where("doc_id = ?", obj.ID).Exec(ctx); err != nil {
+		logger().Info("delete memory vector fail", "id", obj.ID, "err", err)
+	}
+	return nil
+}
+
+// afterLoadMemory 拒绝非本人且非 keeper 的详情访问。
+func (s *convoStore) afterLoadMemory(ctx context.Context, obj *convo.Memory) error {
+	if !ownerAllowed(ctx, obj.OwnerID) {
+		return ErrForbidden
+	}
+	return nil
 }

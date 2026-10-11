@@ -216,6 +216,7 @@ models:
         tags: {json: 'key', pg: ',notnull,type:text,unique:mm_key_uid_key'}
         basic: true
         query: 'match'
+        sortable: true
       - comment: 分类
         name: Cate
         type: string
@@ -257,6 +258,10 @@ models:
     oidcat: event
     specNs: convo
     hooks:
+      beforeCreating: yes
+      afterLoad: yes
+      beforeUpdating: yes
+      beforeDeleting: yes
       afterCreated: yes
     specExtras:
       - comment: 查全部（含内容）

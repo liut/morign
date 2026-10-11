@@ -646,6 +646,491 @@
                 }
             }
         },
+        "/api/convo/memories": {
+            "get": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Memory"
+                ],
+                "summary": "查询 记忆 列表 🔑",
+                "operationId": "convo-memories-get",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "登录票据凭证",
+                        "name": "token",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "example": "aaa,bbb,ccc",
+                        "x-order": "0",
+                        "description": "主键编号`ids`（以逗号分隔的字串），仅供 Form 或 Query 使用, example:\"aaa,bbb,ccc\"",
+                        "name": "ids",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "x-order": "2",
+                        "description": "创建者ID",
+                        "name": "creatorID",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "x-order": "3",
+                        "description": "创建时间 形式： yyyy-mm-dd, 1_day, 2_weeks, 3_months",
+                        "name": "created",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "x-order": "4",
+                        "description": "更新时间 形式： yyyy-mm-dd, 1_day, 2_weeks, 3_months",
+                        "name": "updated",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "x-order": "5",
+                        "description": "IsDelete 查询删除的记录",
+                        "name": "isDelete",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "x-order": "A",
+                        "description": "所有人编号",
+                        "name": "ownerID",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "x-order": "B",
+                        "description": "关键点",
+                        "name": "key",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "x-order": "C",
+                        "description": "分类",
+                        "name": "cate",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "x-order": "D",
+                        "description": "分层  (working/short-term/long-term)",
+                        "name": "tier",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "x-order": "E",
+                        "description": "查全部（含内容）",
+                        "name": "full",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "x-order": "F",
+                        "description": "只查询自己的",
+                        "name": "own",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "example": 1,
+                        "x-order": "[",
+                        "description": "第几页",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "x-order": "]",
+                        "description": "跳过多少条记录，如果提供 page 此项跳过",
+                        "name": "skip",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "x-order": "_",
+                        "description": "分页大小，默认20",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "x-order": "|",
+                        "description": "排序，允许最多两个字段排序 field1 [asc | desc] [,field2 [asc | desc] ...]",
+                        "name": "sort",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Done"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "result": {
+                                            "allOf": [
+                                                {
+                                                    "$ref": "#/definitions/api.ResultData"
+                                                },
+                                                {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "data": {
+                                                            "type": "array",
+                                                            "items": {
+                                                                "$ref": "#/definitions/convoMemory"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求或参数错误",
+                        "schema": {
+                            "$ref": "#/definitions/api.Failure"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录",
+                        "schema": {
+                            "$ref": "#/definitions/api.Failure"
+                        }
+                    },
+                    "404": {
+                        "description": "目标未找到",
+                        "schema": {
+                            "$ref": "#/definitions/api.Failure"
+                        }
+                    },
+                    "503": {
+                        "description": "服务端错误",
+                        "schema": {
+                            "$ref": "#/definitions/api.Failure"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "consumes": [
+                    "application/json",
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Memory"
+                ],
+                "summary": "录入 记忆 🔑",
+                "operationId": "convo-memories-post",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "登录票据凭证",
+                        "name": "token",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Object",
+                        "name": "query",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/convoMemoryBasic"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Done"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "result": {
+                                            "$ref": "#/definitions/api.ResultID"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求或参数错误",
+                        "schema": {
+                            "$ref": "#/definitions/api.Failure"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录",
+                        "schema": {
+                            "$ref": "#/definitions/api.Failure"
+                        }
+                    },
+                    "403": {
+                        "description": "无权限",
+                        "schema": {
+                            "$ref": "#/definitions/api.Failure"
+                        }
+                    },
+                    "503": {
+                        "description": "服务端错误",
+                        "schema": {
+                            "$ref": "#/definitions/api.Failure"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/convo/memories/{id}": {
+            "get": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Memory"
+                ],
+                "summary": "获取 记忆 详情 🔑",
+                "operationId": "convo-memories-id-get",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "登录票据凭证",
+                        "name": "token",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "编号",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Done"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "result": {
+                                            "$ref": "#/definitions/convoMemory"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求或参数错误",
+                        "schema": {
+                            "$ref": "#/definitions/api.Failure"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录",
+                        "schema": {
+                            "$ref": "#/definitions/api.Failure"
+                        }
+                    },
+                    "404": {
+                        "description": "目标未找到",
+                        "schema": {
+                            "$ref": "#/definitions/api.Failure"
+                        }
+                    },
+                    "503": {
+                        "description": "服务端错误",
+                        "schema": {
+                            "$ref": "#/definitions/api.Failure"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "consumes": [
+                    "application/json",
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Memory"
+                ],
+                "summary": "更新 记忆 🔑",
+                "operationId": "convo-memories-id-put",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "登录票据凭证",
+                        "name": "token",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "编号",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Object",
+                        "name": "query",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/convoMemorySet"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Done"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "result": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "请求或参数错误",
+                        "schema": {
+                            "$ref": "#/definitions/api.Failure"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录",
+                        "schema": {
+                            "$ref": "#/definitions/api.Failure"
+                        }
+                    },
+                    "403": {
+                        "description": "无权限",
+                        "schema": {
+                            "$ref": "#/definitions/api.Failure"
+                        }
+                    },
+                    "503": {
+                        "description": "服务端错误",
+                        "schema": {
+                            "$ref": "#/definitions/api.Failure"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Memory"
+                ],
+                "summary": "删除 记忆 🔑",
+                "operationId": "convo-memories-id-delete",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "登录票据凭证",
+                        "name": "token",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "编号",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.Done"
+                        }
+                    },
+                    "400": {
+                        "description": "请求或参数错误",
+                        "schema": {
+                            "$ref": "#/definitions/api.Failure"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录",
+                        "schema": {
+                            "$ref": "#/definitions/api.Failure"
+                        }
+                    },
+                    "403": {
+                        "description": "无权限",
+                        "schema": {
+                            "$ref": "#/definitions/api.Failure"
+                        }
+                    },
+                    "503": {
+                        "description": "服务端错误",
+                        "schema": {
+                            "$ref": "#/definitions/api.Failure"
+                        }
+                    }
+                }
+            }
+        },
         "/api/convo/messages": {
             "get": {
                 "consumes": [
@@ -4695,6 +5180,175 @@
             "properties": {
                 "token": {
                     "type": "string"
+                }
+            }
+        },
+        "convoMemory": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "description": "创建时间",
+                    "type": "string",
+                    "x-order": ""
+                },
+                "id": {
+                    "description": "主键",
+                    "type": "string",
+                    "x-order": "!"
+                },
+                "updatedAt": {
+                    "description": "变更时间",
+                    "type": "string",
+                    "x-order": "."
+                },
+                "ownerID": {
+                    "description": "所有人编号",
+                    "type": "string",
+                    "x-order": "A"
+                },
+                "key": {
+                    "description": "关键点",
+                    "type": "string",
+                    "x-order": "B"
+                },
+                "cate": {
+                    "description": "分类",
+                    "type": "string",
+                    "x-order": "C"
+                },
+                "content": {
+                    "description": "内容",
+                    "type": "string",
+                    "x-order": "D"
+                },
+                "tier": {
+                    "description": "分层  (working/short-term/long-term)",
+                    "type": "string",
+                    "x-order": "E"
+                },
+                "importanceScore": {
+                    "description": "重要性评分  (0-1)",
+                    "type": "number",
+                    "x-order": "F"
+                },
+                "lastAccessedAt": {
+                    "description": "最近访问时间",
+                    "type": "string",
+                    "x-order": "G"
+                },
+                "accessCount": {
+                    "description": "访问计数",
+                    "type": "integer",
+                    "x-order": "H"
+                },
+                "decayRate": {
+                    "description": "衰减率",
+                    "type": "number",
+                    "x-order": "I"
+                },
+                "creatorID": {
+                    "description": "创建者ID",
+                    "type": "string",
+                    "x-order": "_"
+                },
+                "meta": {
+                    "description": "Meta 元信息",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/Meta"
+                        }
+                    ],
+                    "x-order": "|"
+                }
+            }
+        },
+        "convoMemoryBasic": {
+            "type": "object",
+            "properties": {
+                "ownerID": {
+                    "description": "所有人编号",
+                    "type": "string",
+                    "x-order": "A"
+                },
+                "key": {
+                    "description": "关键点",
+                    "type": "string",
+                    "x-order": "B"
+                },
+                "cate": {
+                    "description": "分类",
+                    "type": "string",
+                    "x-order": "C"
+                },
+                "content": {
+                    "description": "内容",
+                    "type": "string",
+                    "x-order": "D"
+                },
+                "tier": {
+                    "description": "分层  (working/short-term/long-term)",
+                    "type": "string",
+                    "x-order": "E"
+                },
+                "importanceScore": {
+                    "description": "重要性评分  (0-1)",
+                    "type": "number",
+                    "x-order": "F"
+                },
+                "lastAccessedAt": {
+                    "description": "最近访问时间",
+                    "type": "string",
+                    "x-order": "G"
+                },
+                "accessCount": {
+                    "description": "访问计数",
+                    "type": "integer",
+                    "x-order": "H"
+                },
+                "decayRate": {
+                    "description": "衰减率",
+                    "type": "number",
+                    "x-order": "I"
+                }
+            }
+        },
+        "convoMemorySet": {
+            "type": "object",
+            "properties": {
+                "cate": {
+                    "description": "分类",
+                    "type": "string",
+                    "x-order": "A"
+                },
+                "content": {
+                    "description": "内容",
+                    "type": "string",
+                    "x-order": "B"
+                },
+                "tier": {
+                    "description": "分层  (working/short-term/long-term)",
+                    "type": "string",
+                    "x-order": "C"
+                },
+                "importanceScore": {
+                    "description": "重要性评分  (0-1)",
+                    "type": "number",
+                    "x-order": "D"
+                },
+                "lastAccessedAt": {
+                    "description": "最近访问时间",
+                    "type": "string",
+                    "x-order": "E"
+                },
+                "accessCount": {
+                    "description": "访问计数",
+                    "type": "integer",
+                    "x-order": "F"
+                },
+                "decayRate": {
+                    "description": "衰减率",
+                    "type": "number",
+                    "x-order": "G"
                 }
             }
         },
