@@ -226,7 +226,10 @@ func (s *skillStore) CreateSkillWithFiles(ctx context.Context, in skills.SkillBa
 		return nil, err
 	}
 	err = s.w.db.RunInTx(ctx, nil, func(ctx context.Context, tx pgTx) (err error) {
-		// 七列元数据由调用方在入参 SkillBasic 里填好；store 不再二次解析 Content。
+		// 七列元数据镜像正文的 frontmatter；正文无 frontmatter（如导入已剥离）时沿用入参。
+		if meta, _, ok := skills.Frontmatter(in.Content); ok {
+			meta.ApplyTo(&in)
+		}
 		if obj, err = CreateSkill(ctx, tx, in); err != nil {
 			return
 		}
@@ -247,7 +250,14 @@ func (s *skillStore) UpdateSkillWithFiles(ctx context.Context, id string, set sk
 		if err = dbGetWithPKID(ctx, tx, exist, id); err != nil {
 			return
 		}
-		// 七列元数据由调用方在入参 SkillSet 里填好；store 不再二次解析 Content。
+		// 正文变更时七列随新正文重新派生（缺失字段清零）；正文未变更则沿用库中列。
+		if set.Content != nil {
+			meta, _, ok := skills.Frontmatter(*set.Content)
+			if !ok {
+				meta = skills.SkillMeta{}
+			}
+			meta.ApplySet(&set)
+		}
 		exist.SetIsUpdate(true)
 		exist.SetWith(set)
 		dbMetaUp(ctx, tx, exist)
