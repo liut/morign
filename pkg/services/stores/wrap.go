@@ -103,8 +103,9 @@ var (
 type Wrap struct {
 	db *pgx.DB
 
-	preset     aigc.Preset
-	stateStore *stateStore
+	preset        aigc.Preset
+	stateStore    *stateStore
+	verifierStore *verifierStore
 
 	corpuStore      *corpuStore      // gened
 	mcpStore        *mcpStore        // gened
@@ -121,6 +122,7 @@ func NewWithDB(db *pgx.DB) *Wrap {
 	w.preset, _ = LoadPreset()
 
 	w.stateStore = &stateStore{rc: SgtRC()}
+	w.verifierStore = &verifierStore{rc: SgtRC()}
 
 	w.corpuStore = &corpuStore{w: w}           // gened
 	w.mcpStore = &mcpStore{w: w}               // gened
@@ -192,5 +194,6 @@ func (w *Wrap) KB() CorpuStore              { return w.corpuStore } // Corpu ali
 func (w *Wrap) MCP() MCPStore               { return w.mcpStore }   // MCP gened
 func (w *Wrap) Convo() ConvoStore           { return w.convoStore } // Convo gened
 func (w *Wrap) State() StateStore           { return w.stateStore }
+func (w *Wrap) Verifier() VerifierStore     { return w.verifierStore }
 func (w *Wrap) Capability() CapabilityStore { return w.capabilityStore } // Capability gened
 func (w *Wrap) Skill() SkillStore           { return w.skillStore }      // Skill gened

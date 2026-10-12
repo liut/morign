@@ -132,6 +132,7 @@ func (a *api) Strap(router chi.Router) {
 
 	// OAuth2 state store
 	staffio.RegisterStateStore(a.sto.State())
+	staffio.RegisterVerifierStore(a.sto.Verifier())
 
 	// setup routes
 

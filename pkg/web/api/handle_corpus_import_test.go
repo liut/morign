@@ -72,6 +72,7 @@ func (f *importFakeStorage) KB() stores.CorpuStore              { return f.corpu
 func (f *importFakeStorage) MCP() stores.MCPStore               { return nil }
 func (f *importFakeStorage) Convo() stores.ConvoStore           { return nil }
 func (f *importFakeStorage) State() stores.StateStore           { return nil }
+func (f *importFakeStorage) Verifier() stores.VerifierStore     { return nil }
 func (f *importFakeStorage) Capability() stores.CapabilityStore { return nil }
 func (f *importFakeStorage) Skill() stores.SkillStore           { return nil }
 

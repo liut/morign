@@ -197,6 +197,7 @@ func (f *fakeStorage) KB() stores.CorpuStore              { return nil }
 func (f *fakeStorage) MCP() stores.MCPStore               { return nil }
 func (f *fakeStorage) Convo() stores.ConvoStore           { return nil }
 func (f *fakeStorage) State() stores.StateStore           { return nil }
+func (f *fakeStorage) Verifier() stores.VerifierStore     { return nil }
 func (f *fakeStorage) Capability() stores.CapabilityStore { return nil }
 func (f *fakeStorage) Skill() stores.SkillStore           { return f.skill }
 
