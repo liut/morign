@@ -1,7 +1,7 @@
 ---
 title: feat: 统一的工具可见性与执行授权
 type: feat
-status: active
+status: completed
 date: 2026-10-29
 origin: docs/reports/2026-10-27-whip-design-review.md
 ---

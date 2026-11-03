@@ -32,6 +32,9 @@ type Registry struct {
 	invokers map[string]Invoker
 	skills   SkillToolStore
 
+	// categories 记录全局工具名（小写）到授权归属类别的映射
+	categories map[string]string
+
 	// 受限工具列表（需要 keeper 角色）
 	privTools []mcps.ToolDescriptor
 
@@ -70,6 +73,7 @@ func NewRegistry(sto stores.Storage, opts ...RegistryOption) *Registry {
 	r := &Registry{
 		tools:        make([]mcps.ToolDescriptor, 0),
 		invokers:     make(map[string]Invoker),
+		categories:   make(map[string]string),
 		servers:      make(map[string]*MCPConnection),
 		channelTools: make(map[string]*channelToolSet),
 	}
@@ -83,6 +87,7 @@ func NewRegistry(sto stores.Storage, opts ...RegistryOption) *Registry {
 }
 
 // RegisterInvoker 注册一个工具及其调用函数。name 为空或 inv 为 nil 时静默忽略。
+// 运行时注册的工具视为内置公开工具。
 func (r *Registry) RegisterInvoker(name string, inv Invoker) {
 	if name == "" || inv == nil {
 		return
@@ -91,13 +96,26 @@ func (r *Registry) RegisterInvoker(name string, inv Invoker) {
 	defer r.toolsMu.Unlock()
 	r.tools = append(r.tools, mcps.ToolDescriptor{Name: name})
 	r.invokers[name] = inv
+	r.categories[strings.ToLower(name)] = SourceBuiltinPublic
 }
 
-// Invoke 调用指定名称的工具，频道工具优先
+// Invoke 调用指定名称的工具，频道工具优先。
+// 调用前先过授权策略：已注册但当前上下文不允许的工具在进入 invoker 前被拒。
 func (r *Registry) Invoke(ctx context.Context, name string, params map[string]any) (map[string]any, error) {
 	if name == "" {
 		return mcps.BuildToolErrorResult("tool name is empty"), nil
 	}
+
+	policy := r.PolicyFor(ctx)
+	if !policy.Registered(name) {
+		r.logDecision(ctx, name, policy, "denied", "tool not found")
+		return mcps.BuildToolErrorResult("tool not found"), nil
+	}
+	if !policy.Allows(name) {
+		r.logDecision(ctx, name, policy, "denied", "tool not available in current context")
+		return mcps.BuildToolErrorResult("permission denied: tool not available in current context"), nil
+	}
+	r.logDecision(ctx, name, policy, "allowed", "")
 
 	logger().Debug("invoking", "toolName", name, "params", params)
 
@@ -133,49 +151,36 @@ func (r *Registry) initTools(sto stores.Storage) {
 	// Add KB tools
 	if sto != nil {
 		// 公开工具：KBSearch
-		r.tools = append(r.tools, kbSearchDescriptor)
-		r.invokers[ToolNameKBSearch] = sto.Corpus().InvokerForSearch()
+		r.registerTool(&r.tools, kbSearchDescriptor, sto.Corpus().InvokerForSearch(), SourceBuiltinPublic)
 
 		// 受限工具：KBCreate (需要 keeper 角色)
-		r.privTools = append(r.privTools, kbCreateDescriptor)
-		r.invokers[ToolNameKBCreate] = sto.Corpus().InvokerForCreate()
+		r.registerTool(&r.privTools, kbCreateDescriptor, sto.Corpus().InvokerForCreate(), SourceBuiltinKeeper)
 
-		r.tools = append(r.tools,
-			memoryListDescriptor, memoryRecallDescriptor,
-			memoryStoreDescriptor, memoryForgetDescriptor,
-		)
-		r.invokers[ToolNameMemoryList] = sto.Convo().InvokerForMemoryList()
-		r.invokers[ToolNameMemoryRecall] = sto.Convo().InvokerForMemoryRecall()
-		r.invokers[ToolNameMemoryStore] = sto.Convo().InvokerForMemoryStore()
-		r.invokers[ToolNameMemoryForget] = sto.Convo().InvokerForMemoryForget()
+		r.registerTool(&r.tools, memoryListDescriptor, sto.Convo().InvokerForMemoryList(), SourceBuiltinPublic)
+		r.registerTool(&r.tools, memoryRecallDescriptor, sto.Convo().InvokerForMemoryRecall(), SourceBuiltinPublic)
+		r.registerTool(&r.tools, memoryStoreDescriptor, sto.Convo().InvokerForMemoryStore(), SourceBuiltinPublic)
+		r.registerTool(&r.tools, memoryForgetDescriptor, sto.Convo().InvokerForMemoryForget(), SourceBuiltinPublic)
 
 		// 技能工具
 		r.skills = sto.Skill()
-		r.tools = append(r.tools,
-			skillListDescriptor, skillReadDescriptor,
-			skillFileListDescriptor, skillFileReadDescriptor,
-		)
-		r.invokers[ToolNameSkillList] = r.callSkillList
-		r.invokers[ToolNameSkillRead] = r.callSkillRead
-		r.invokers[ToolNameSkillFileList] = r.callSkillFileList
-		r.invokers[ToolNameSkillFileRead] = r.callSkillFileRead
+		r.registerTool(&r.tools, skillListDescriptor, r.callSkillList, SourceBuiltinPublic)
+		r.registerTool(&r.tools, skillReadDescriptor, r.callSkillRead, SourceBuiltinPublic)
+		r.registerTool(&r.tools, skillFileListDescriptor, r.callSkillFileList, SourceBuiltinPublic)
+		r.registerTool(&r.tools, skillFileReadDescriptor, r.callSkillFileRead, SourceBuiltinPublic)
 
 		// Capability tools - type assert to get X interface
 		ctx := context.Background()
 		if count, err := sto.Capability().CountCapability(ctx); err == nil && count > 10 {
-			r.tools = append(r.tools, capabilityMatchDescriptor, capabilityInvokeDescriptor)
-			r.invokers[ToolNameCapabilityMatch] = sto.Capability().InvokerForMatch()
-			r.invokers[ToolNameCapabilityInvoke] = sto.Capability().InvokerForInvoke(stores.NewCapabilityInvoker(settings.Current.BusPrefix))
+			r.registerTool(&r.tools, capabilityMatchDescriptor, sto.Capability().InvokerForMatch(), SourceBuiltinPublic)
+			r.registerTool(&r.tools, capabilityInvokeDescriptor, sto.Capability().InvokerForInvoke(stores.NewCapabilityInvoker(settings.Current.BusPrefix)), SourceBuiltinPublic)
 		}
 	}
 
 	// 公开工具：Fetch
-	r.tools = append(r.tools, fetchDescriptor)
-	r.invokers[ToolNameFetch] = r.callFetch
+	r.registerTool(&r.tools, fetchDescriptor, r.callFetch, SourceBuiltinPublic)
 
 	// 公开工具：CurrentTime
-	r.tools = append(r.tools, currentTimeDescriptor)
-	r.invokers[ToolNameCurrentTime] = invokeCurrentTime
+	r.registerTool(&r.tools, currentTimeDescriptor, invokeCurrentTime, SourceBuiltinPublic)
 
 	logger().Debug("init tools", "tools", mcps.ToolNames(r.tools), "priv", len(r.privTools))
 }
@@ -205,31 +210,35 @@ func (r *Registry) ApplyToolDescriptions(descriptions map[string]string) {
 	logger().Info("applied custom tool descriptions", "count", len(descriptions))
 }
 
-// ToolsFor 返回适合当前上下文的工具列表
-// 如果用户有 keeper 角色，返回所有工具；否则只返回公开工具
-// 当 context 中有频道信息时，额外合并该频道的专属工具（始终公开）
+// ToolsFor 返回适合当前上下文的工具列表。
+// 可见面由授权策略决定：受限工具仅 keeper 可见，频道工具仅归属频道可见。
 func (r *Registry) ToolsFor(ctx context.Context) []mcps.ToolDescriptor {
+	policy := r.PolicyFor(ctx)
+
 	r.toolsMu.RLock()
-	defer r.toolsMu.RUnlock()
+	candidates := make([]mcps.ToolDescriptor, 0, len(r.tools)+len(r.privTools))
+	candidates = append(candidates, r.tools...)
+	candidates = append(candidates, r.privTools...)
+	r.toolsMu.RUnlock()
 
-	base := make([]mcps.ToolDescriptor, len(r.tools))
-	copy(base, r.tools)
-	if stores.IsKeeper(ctx) {
-		base = append(base, r.privTools...)
-	}
-
-	// 合并频道专属工具（始终公开）
+	// 合并频道专属工具
 	if ch := mcps.ChannelFromContext(ctx); ch != "" {
 		r.channelMu.RLock()
 		cs := r.channelTools[ch]
 		r.channelMu.RUnlock()
 		if cs != nil {
 			cs.mu.RLock()
-			base = append(base, cs.tools...)
+			candidates = append(candidates, cs.tools...)
 			cs.mu.RUnlock()
 		}
 	}
 
+	base := make([]mcps.ToolDescriptor, 0, len(candidates))
+	for _, t := range candidates {
+		if policy.Allows(t.Name) {
+			base = append(base, t)
+		}
+	}
 	return base
 }
 
@@ -338,7 +347,7 @@ func (r *Registry) AddServer(ctx context.Context, server *mcps.ServerBasic) erro
 		r.serversMu.Lock()
 		defer r.toolsMu.Unlock()
 		defer r.serversMu.Unlock()
-		return r.registerToolsLocked(&r.tools, r.invokers, r.servers, server, c, result)
+		return r.registerToolsLocked(&r.tools, r.invokers, r.servers, r.categories, server, c, result)
 	}
 
 	r.channelMu.Lock()
@@ -357,12 +366,13 @@ func (r *Registry) AddServer(ctx context.Context, server *mcps.ServerBasic) erro
 	defer cs.mu.Unlock()
 	r.toolsMu.RLock()
 	defer r.toolsMu.RUnlock()
-	return r.registerToolsLocked(&cs.tools, cs.invokers, cs.servers, server, c, result)
+	return r.registerToolsLocked(&cs.tools, cs.invokers, cs.servers, nil, server, c, result)
 }
 
 // registerToolsLocked 注册 MCP Server 工具到指定容器（调用方负责加锁）
 func (r *Registry) registerToolsLocked(
 	tools *[]mcps.ToolDescriptor, invokers map[string]Invoker, servers map[string]*MCPConnection,
+	categories map[string]string,
 	server *mcps.ServerBasic, c *client.Client, result *mcp.ListToolsResult,
 ) error {
 	// 校验工具名冲突（处理并发 AddServer 的 TOCTOU）
@@ -385,6 +395,10 @@ func (r *Registry) registerToolsLocked(
 		client := c
 		invokers[toolKey] = func(ctx context.Context, params map[string]any) (map[string]any, error) {
 			return callServerToolWithClient(ctx, client, tool.Name, params)
+		}
+		// 频道工具的归属类别由频道容器派生，无需逐工具登记
+		if categories != nil {
+			categories[strings.ToLower(toolKey)] = SourceMCPGlobal
 		}
 		tNames = append(tNames, toolKey)
 		logger().Info("MCP tool registered", "toolKey", toolKey)
@@ -569,6 +583,7 @@ func (r *Registry) RemoveServer(name string) error {
 	// 使用 toolNames 移除工具
 	for _, toolName := range conn.toolNames {
 		delete(r.invokers, toolName)
+		delete(r.categories, strings.ToLower(toolName))
 	}
 
 	// 过滤掉该 server 的工具
@@ -585,4 +600,31 @@ func (r *Registry) RemoveServer(name string) error {
 
 	logger().Info("MCP server removed", "name", name)
 	return nil
+}
+
+// registerTool 登记一个工具：加入可见面列表、绑定 invoker、记录授权归属类别。
+func (r *Registry) registerTool(descriptors *[]mcps.ToolDescriptor, desc mcps.ToolDescriptor, inv Invoker, source string) {
+	*descriptors = append(*descriptors, desc)
+	r.invokers[desc.Name] = inv
+	r.categories[strings.ToLower(desc.Name)] = source
+}
+
+// logDecision 记录一次工具授权判定。被拒的调用至少以 Info 级别留存，便于事后审计。
+func (r *Registry) logDecision(ctx context.Context, name string, policy EffectiveToolPolicy, decision, reason string) {
+	attrs := []any{
+		"toolName", name,
+		"source", policy.Source(name),
+		"decision", decision,
+	}
+	if user, ok := stores.UserFromContext(ctx); ok {
+		attrs = append(attrs, "caller", user.GetOID())
+	}
+	if reason != "" {
+		attrs = append(attrs, "reason", reason)
+	}
+	if decision == "allowed" {
+		logger().Debug("tool authorization", attrs...)
+		return
+	}
+	logger().Info("tool authorization", attrs...)
 }
