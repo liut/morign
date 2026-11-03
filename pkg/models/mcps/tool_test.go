@@ -346,3 +346,45 @@ func TestBuildToolErrorResult(t *testing.T) {
 		})
 	}
 }
+
+func TestIsToolError(t *testing.T) {
+	tests := []struct {
+		name   string
+		result map[string]any
+		want   bool
+	}{
+		{
+			name:   "error result",
+			result: BuildToolErrorResult("tool not found"),
+			want:   true,
+		},
+		{
+			name:   "success result",
+			result: BuildToolSuccessResult("ok"),
+			want:   false,
+		},
+		{
+			name:   "missing key",
+			result: map[string]any{"content": "ok"},
+			want:   false,
+		},
+		{
+			name:   "non bool value",
+			result: map[string]any{"isError": "true"},
+			want:   false,
+		},
+		{
+			name:   "nil result",
+			result: nil,
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsToolError(tt.result); got != tt.want {
+				t.Errorf("IsToolError() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

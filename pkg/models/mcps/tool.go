@@ -69,6 +69,12 @@ func BuildToolErrorResult(message string) map[string]any {
 	}
 }
 
+// IsToolError 判断结果是否为 BuildToolErrorResult 构造的业务错误结果
+func IsToolError(result map[string]any) bool {
+	v, ok := result["isError"].(bool)
+	return ok && v
+}
+
 // StringArg 从参数中获取字符串值
 func StringArg(arguments map[string]any, key string) string {
 	if arguments == nil {

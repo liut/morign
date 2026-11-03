@@ -50,7 +50,27 @@ type ToolResult struct {
 	Name      string
 	Content   string
 	Terminate bool // 工具请求终止 agent 循环
+	Status    string // ToolStatusOK / ToolStatusError / ToolStatusRejected
+	ErrorCode string // 仅 Status != ToolStatusOK 时有值，取值见 ToolError* 常量
 }
+
+// ToolStatus 表示工具调用的执行状态。
+const (
+	ToolStatusOK       = "ok"       // 工具正常返回
+	ToolStatusError    = "error"    // 调用未能完成，或工具自报业务错误
+	ToolStatusRejected = "rejected" // 被前置策略拒绝，未进入执行
+)
+
+// ToolErrorCode 表示工具调用失败的原因。
+const (
+	ToolErrorInvalidArguments = "invalid_arguments" // 参数 JSON 解析失败
+	ToolErrorUnsupportedType   = "unsupported_type"  // tool call 类型非 function
+	ToolErrorPanic             = "panic"             // 工具内部 panic
+	ToolErrorExecutionFailed   = "execution_failed"  // Registry.Invoke 返回 error
+	ToolErrorToolError         = "tool_error"        // 工具自身返回业务错误
+	ToolErrorPermissionDenied  = "permission_denied" // 策略门控拒绝
+	ToolErrorRejected          = "rejected"          // BeforeToolCall 拒绝
+)
 
 // EventActions 是 Event 携带的副作用指令。
 type EventActions struct {

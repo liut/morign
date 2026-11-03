@@ -24,6 +24,7 @@ sequenceDiagram
     participant MW as OAuth Middleware
     participant API as api.postChat
     participant Prep as prepareChatRequest
+    participant AL as AgentLoop
     participant LLM as LLM Client
     participant TE as ToolExecutor
     participant TR as Tool Registry
@@ -70,14 +71,15 @@ sequenceDiagram
         API->>Runner: Runner.Persist(sessionID, event) for each Event
         API->>DB: AddHistory + Save
     else 非流式
-        API->>TE: ExecuteToolCallLoop(messages, tools, exec)
+        API->>AL: RunNonStreaming(messages, tools)
         loop 工具调用循环
-            TE->>LLM: Chat(messages, tools)
-            LLM-->>TE: {content, toolCalls, usage}
+            AL->>LLM: Chat(messages, tools)
+            LLM-->>AL: {content, toolCalls, usage}
             alt 有 ToolCalls
-                TE->>TE: ExecuteToolCalls(messages, toolCalls)
+                AL->>TE: ExecuteToolCalls(messages, toolCalls)
+                TE-->>AL: updated messages (含 tool results)
             else 无 ToolCalls
-                TE-->>API: final answer
+                AL-->>API: final answer
             end
         end
         API->>Runner: Persist final event
@@ -93,6 +95,7 @@ sequenceDiagram
     participant Platform as 平台服务器
     participant CH as Channel Handler
     participant Prep as prepareSystemMessage
+    participant AL as AgentLoop
     participant LLM as LLM Client
     participant TE as ToolExecutor
     participant DB as Database
@@ -134,8 +137,8 @@ sequenceDiagram
             CH->>Platform: FinishStream(finalContent)
         else 普通回复
             CH->>CH: handleRegularReply()
-            CH->>TE: ExecuteToolCallLoop()
-            TE-->>CH: final answer
+            CH->>AL: RunNonStreaming()
+            AL-->>CH: final answer
             CH->>Platform: Reply(answer)
         end
 
