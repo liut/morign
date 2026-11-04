@@ -10,6 +10,7 @@ import (
 
 type ConvoUser = convo.User
 
+// type ConvoChatTurn = convo.ChatTurn
 // type ConvoMemory = convo.Memory
 // type ConvoMessage = convo.Message
 // type ConvoSession = convo.Session
@@ -17,7 +18,7 @@ type ConvoUser = convo.User
 // type ConvoUsageRecord = convo.UsageRecord
 
 func init() {
-	RegisterModel((*convo.Session)(nil), (*convo.Message)(nil), (*convo.UsageRecord)(nil), (*convo.User)(nil), (*convo.ThirdUser)(nil), (*convo.Memory)(nil))
+	RegisterModel((*convo.Session)(nil), (*convo.Message)(nil), (*convo.UsageRecord)(nil), (*convo.ChatTurn)(nil), (*convo.User)(nil), (*convo.ThirdUser)(nil), (*convo.Memory)(nil))
 }
 
 type ConvoStore interface {
@@ -52,6 +53,12 @@ type ConvoStore interface {
 	GetUsageRecord(ctx context.Context, id string) (obj *convo.UsageRecord, err error)
 	CreateUsageRecord(ctx context.Context, in convo.UsageRecordBasic) (obj *convo.UsageRecord, err error)
 	DeleteUsageRecord(ctx context.Context, id string) error
+
+	ListChatTurn(ctx context.Context, spec *ConvoChatTurnSpec) (data convo.ChatTurns, total int, err error)
+	GetChatTurn(ctx context.Context, id string) (obj *convo.ChatTurn, err error)
+	CreateChatTurn(ctx context.Context, in convo.ChatTurnBasic) (obj *convo.ChatTurn, err error)
+	UpdateChatTurn(ctx context.Context, id string, in convo.ChatTurnSet) error
+	DeleteChatTurn(ctx context.Context, id string) error
 }
 
 type ConvoSessionSpec struct {
@@ -192,6 +199,33 @@ type ConvoUsageRecordSpec struct {
 func (spec *ConvoUsageRecordSpec) Sift(q *ormQuery) *ormQuery {
 	q = spec.ModelSpec.Sift(q)
 	q, _ = siftOID(q, "session_id", spec.SessionID, false)
+
+	return q
+}
+
+type ConvoChatTurnSpec struct {
+	PageSpec
+	ModelSpec
+
+	// 会话编号
+	SessionID string `extensions:"x-order=A" form:"session" json:"session"`
+	// 幂等键
+	IdempotencyKey string `extensions:"x-order=B" form:"idempotencyKey" json:"idempotencyKey"`
+	// 来源 web/channel
+	Source string `extensions:"x-order=C" form:"source" json:"source"`
+	// 状态 queued/running/succeeded/failed/cancelled/interrupted
+	Status string `extensions:"x-order=D" form:"status" json:"status"`
+	// 归属用户
+	OwnerID string `extensions:"x-order=E" form:"ownerId" json:"ownerId"`
+}
+
+func (spec *ConvoChatTurnSpec) Sift(q *ormQuery) *ormQuery {
+	q = spec.ModelSpec.Sift(q)
+	q, _ = siftOID(q, "session_id", spec.SessionID, false)
+	q, _ = siftEqual(q, "idempotency_key", spec.IdempotencyKey, false)
+	q, _ = siftEqual(q, "source", spec.Source, false)
+	q, _ = siftEqual(q, "status", spec.Status, false)
+	q, _ = siftOID(q, "owner_id", spec.OwnerID, false)
 
 	return q
 }
@@ -380,6 +414,43 @@ func (s *convoStore) CreateUsageRecord(ctx context.Context, in convo.UsageRecord
 }
 func (s *convoStore) DeleteUsageRecord(ctx context.Context, id string) error {
 	obj := new(convo.UsageRecord)
+	return s.w.db.DeleteModel(ctx, obj, id)
+}
+
+func (s *convoStore) ListChatTurn(ctx context.Context, spec *ConvoChatTurnSpec) (data convo.ChatTurns, total int, err error) {
+	total, err = s.w.db.ListModel(ctx, spec, &data)
+	return
+}
+func (s *convoStore) GetChatTurn(ctx context.Context, id string) (obj *convo.ChatTurn, err error) {
+	obj = new(convo.ChatTurn)
+	if err = dbGetWith(ctx, s.w.db, obj, "idempotency_key", "=", id); err != nil && obj.SetID(id) {
+		err = dbGetWithPK(ctx, s.w.db, obj)
+	}
+
+	return
+}
+func (s *convoStore) CreateChatTurn(ctx context.Context, in convo.ChatTurnBasic) (obj *convo.ChatTurn, err error) {
+	obj = convo.NewChatTurnWithBasic(in)
+	if obj.IdempotencyKey == "" {
+		err = ErrEmptyKey
+		return
+	}
+	dbMetaUp(ctx, s.w.db, obj)
+	err = dbInsert(ctx, s.w.db, obj, "idempotency_key")
+	return
+}
+func (s *convoStore) UpdateChatTurn(ctx context.Context, id string, in convo.ChatTurnSet) error {
+	exist := new(convo.ChatTurn)
+	if err := dbGetWithPKID(ctx, s.w.db, exist, id); err != nil {
+		return err
+	}
+	exist.SetIsUpdate(true)
+	exist.SetWith(in)
+	dbMetaUp(ctx, s.w.db, exist)
+	return dbUpdate(ctx, s.w.db, exist)
+}
+func (s *convoStore) DeleteChatTurn(ctx context.Context, id string) error {
+	obj := new(convo.ChatTurn)
 	return s.w.db.DeleteModel(ctx, obj, id)
 }
 

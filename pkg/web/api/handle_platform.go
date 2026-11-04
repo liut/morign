@@ -11,6 +11,7 @@ import (
 
 	"github.com/liut/morign/pkg/models/aigc"
 	"github.com/liut/morign/pkg/models/channel"
+	"github.com/liut/morign/pkg/models/convo"
 	"github.com/liut/morign/pkg/models/mcps"
 	"github.com/liut/morign/pkg/services/agent"
 	"github.com/liut/morign/pkg/services/channels"
@@ -49,7 +50,7 @@ func InitChannels(r chi.Router, preset *aigc.Preset, sto stores.Storage, llmClie
 		sto:      sto,
 		llm:      llmClient,
 		toolreg:  toolreg,
-		toolExec: agent.NewToolExecutor(toolreg),
+		toolExec: newToolExecutor(toolreg),
 		rnr:      runner.New(stores.NewSessionStore(sto), stores.NewHistoryStore(sto)),
 	}
 
@@ -183,17 +184,25 @@ func (chh *channelHandler) MessageHandler(p channel.Channel, msg *channel.Messag
 		"content_len", len(msg.Content),
 	)
 
+	// 幂等：同一平台消息只执行一次。企微 HTTP 回调也汇合到这里，
+	// 平台重投（企微最多重试三次、飞书按分钟级重投）不再重复调用模型与副作用工具。
+	turnID, ok := chh.acquireChannelTurn(ctx, p, msg, cs)
+	if !ok {
+		return
+	}
+	ctx = stores.ContextWithTurnID(ctx, turnID)
+
 	// Detect streaming support
 	if sr, ok := p.(channel.StreamReplier); ok {
-		chh.handleStreamingReply(ctx, p, msg, sr, cs)
+		chh.handleStreamingReply(ctx, p, msg, sr, cs, turnID)
 	} else {
-		chh.handleRegularReply(ctx, p, msg, cs)
+		chh.handleRegularReply(ctx, p, msg, cs, turnID)
 	}
 }
 
 // handleStreamingReply handles reply with streaming support (e.g., WeCom WebSocket).
 // It delegates the agent loop to AgentLoop and manages the stream lifecycle on the handler side.
-func (chh *channelHandler) handleStreamingReply(ctx context.Context, p channel.Channel, msg *channel.Message, sr channel.StreamReplier, cs stores.Conversation) {
+func (chh *channelHandler) handleStreamingReply(ctx context.Context, p channel.Channel, msg *channel.Message, sr channel.StreamReplier, cs stores.Conversation, turnID string) {
 	// Build messages and get tools
 	messages, tools := chh.buildChatMessagesAndTools(ctx, msg, cs)
 
@@ -206,10 +215,14 @@ func (chh *channelHandler) handleStreamingReply(ctx context.Context, p channel.C
 
 	var contentBuilder strings.Builder
 	var streamID string
+	tracker := newTurnToolTracker()
+	ctx = contextWithTurnTracker(ctx, tracker)
+	var runErr error
 
 	for event, err := range loop.Run(ctx, messages, tools) {
 		if err != nil {
 			slog.Error("channel: agent loop error", "err", err)
+			runErr = err
 			errStr := translateLLMErrorToUser(err)
 			if streamID != "" {
 				if finishErr := sr.FinishStream(ctx, msg.ReplyCtx, streamID, errStr); finishErr != nil {
@@ -219,11 +232,13 @@ func (chh *channelHandler) handleStreamingReply(ctx context.Context, p channel.C
 			} else {
 				channelReplyError(p, msg, errStr)
 			}
+			finishTurn(ctx, chh.sto.Convo(), turnID, "", tracker.called.Load(), runErr)
 			return
 		}
 
 		// Skip tool result events — they are internal to the agent loop
 		if event.ToolResult != nil {
+			tracker.called.Store(true)
 			continue
 		}
 
@@ -256,6 +271,8 @@ func (chh *channelHandler) handleStreamingReply(ctx context.Context, p channel.C
 
 	fullAnswer := contentBuilder.String()
 
+	finishTurn(ctx, chh.sto.Convo(), turnID, fullAnswer, tracker.called.Load(), runErr)
+
 	slog.Info("channel: streaming reply finishing",
 		"streamID", streamID,
 		"fullAnswer_len", len(fullAnswer))
@@ -281,7 +298,7 @@ func (chh *channelHandler) handleStreamingReply(ctx context.Context, p channel.C
 }
 
 // handleRegularReply handles reply without streaming (non-WebSocket channels).
-func (chh *channelHandler) handleRegularReply(ctx context.Context, p channel.Channel, msg *channel.Message, cs stores.Conversation) {
+func (chh *channelHandler) handleRegularReply(ctx context.Context, p channel.Channel, msg *channel.Message, cs stores.Conversation, turnID string) {
 	messages, tools := chh.buildChatMessagesAndTools(ctx, msg, cs)
 
 	// Non-streaming: use AgentLoop.RunNonStreaming
@@ -290,7 +307,10 @@ func (chh *channelHandler) handleRegularReply(ctx context.Context, p channel.Cha
 		ToolExec: chh.toolExec,
 		MaxLoop:  settings.Current.MaxLoopIterations,
 	})
+	tracker := newTurnToolTracker()
+	ctx = contextWithTurnTracker(ctx, tracker)
 	answer, err := loop.RunNonStreaming(ctx, messages, tools)
+	finishTurn(ctx, chh.sto.Convo(), turnID, answer, tracker.called.Load(), err)
 	if err != nil {
 		slog.Error("channel: chat execution failed",
 			"channel", p.Name(), "error", err)
@@ -363,4 +383,42 @@ func (chh *channelHandler) buildChatMessagesAndTools(ctx context.Context, msg *c
 
 	history, _ := cs.ListHistory(ctx)
 	return chatMessages(sysMsg, activation, history, content, false), tools
+}
+
+// acquireChannelTurn 为频道消息申请轮次执行权。
+// 返回轮次编号与是否应当继续执行：命中已完成轮次时直接回复既有答案；
+// 命中执行中或已中断的轮次时不执行也不回复；轮次写入失败时不进入模型与副作用工具。
+func (chh *channelHandler) acquireChannelTurn(ctx context.Context, p channel.Channel, msg *channel.Message, cs stores.Conversation) (string, bool) {
+	if msg.MessageID == "" {
+		// 平台没有给出消息编号，构造不出幂等键：不参与幂等判定。
+		logger().Warn("channel: message without id, skip idempotency", "channel", p.Name())
+		return "", true
+	}
+
+	owner := turnOwner(ctx)
+	in := convo.ChatTurnBasic{
+		SessionID:      cs.GetOID(),
+		IdempotencyKey: turnKeyForChannel(p.Name(), msg.MessageID),
+		Source:         "channel",
+		Status:         stores.TurnStatusQueued,
+		RequestDigest:  turnDigest(msg.Content),
+		OwnerID:        owner,
+	}
+	gate, err := acquireTurn(ctx, chh.sto.Convo(), in, owner)
+	if err != nil {
+		logger().Warn("channel: acquire turn failed", "channel", p.Name(), "msg_id", msg.MessageID, "err", err)
+		channelReplyError(p, msg, "服务暂时不可用，请稍后重试")
+		return "", false
+	}
+	if gate.Replay {
+		if err := p.Reply(ctx, msg.ReplyCtx, gate.Cached); err != nil {
+			logger().Warn("channel: reply cached answer failed", "err", err)
+		}
+		return "", false
+	}
+	if !gate.Proceed {
+		logger().Info("channel: turn already handled", "channel", p.Name(), "msg_id", msg.MessageID, "turn", gate.ID)
+		return "", false
+	}
+	return gate.ID, true
 }

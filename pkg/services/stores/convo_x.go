@@ -31,6 +31,11 @@ type ConvoStoreX interface {
 	InvokerForMemoryRecall() mcps.Invoker
 	InvokerForMemoryStore() mcps.Invoker
 	InvokerForMemoryForget() mcps.Invoker
+
+	CreateTurn(ctx context.Context, in convo.ChatTurnBasic) (*convo.ChatTurn, error)
+	GetTurnByIdempotencyKey(ctx context.Context, key string) (*convo.ChatTurn, error)
+	UpdateTurnStatus(ctx context.Context, id, status, result string) error
+	ReclaimInterruptedTurns(ctx context.Context) (int, error)
 }
 
 const defaultMemoryLimit = 5
@@ -673,4 +678,82 @@ func (s *convoStore) afterLoadMemory(ctx context.Context, obj *convo.Memory) err
 		return ErrForbidden
 	}
 	return nil
+}
+
+// 聊天轮次的状态机。轮次是幂等判定的载体：同一幂等键的重复请求只有一个能进入执行。
+const (
+	TurnStatusQueued      = "queued"
+	TurnStatusRunning     = "running"
+	TurnStatusSucceeded   = "succeeded"
+	TurnStatusFailed      = "failed"
+	TurnStatusCancelled   = "cancelled"
+	TurnStatusInterrupted = "interrupted"
+)
+
+// turnIDKey 轮次编号在上下文中的键。
+type turnIDKey struct{}
+
+// ContextWithTurnID 把轮次编号写入上下文，供下游写入路径取用。
+func ContextWithTurnID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, turnIDKey{}, id)
+}
+
+// TurnIDFromContext 读取上下文中的轮次编号。
+func TurnIDFromContext(ctx context.Context) (string, bool) {
+	id, ok := ctx.Value(turnIDKey{}).(string)
+	return id, ok && id != ""
+}
+
+// CreateTurn 创建聊天轮次。幂等键唯一约束冲突时返回 ErrDuplicate，
+// 调用方据此判定「同一请求已经在执行」，而不是执行第二次。
+//
+// 生成的 CreateChatTurn 走 ON CONFLICT DO UPDATE（同键 upsert），不暴露冲突；
+// 这里直接普通插入，让唯一约束在数据库层挡住并发同键。
+func (s *convoStore) CreateTurn(ctx context.Context, in convo.ChatTurnBasic) (*convo.ChatTurn, error) {
+	if in.IdempotencyKey == "" {
+		return nil, ErrEmptyKey
+	}
+	obj := convo.NewChatTurnWithBasic(in)
+	dbMetaUp(ctx, s.w.db, obj)
+	if err := dbInsert(ctx, s.w.db, obj); err != nil {
+		if isDuplicateKey(err) {
+			return nil, ErrDuplicate
+		}
+		return nil, err
+	}
+	return obj, nil
+}
+
+// GetTurnByIdempotencyKey 按幂等键查询轮次。
+func (s *convoStore) GetTurnByIdempotencyKey(ctx context.Context, key string) (*convo.ChatTurn, error) {
+	obj := new(convo.ChatTurn)
+	if err := dbGetWithUnique(ctx, s.w.db, obj, "idempotency_key", key); err != nil {
+		return nil, err
+	}
+	return obj, nil
+}
+
+// UpdateTurnStatus 更新轮次状态与最终结果。
+func (s *convoStore) UpdateTurnStatus(ctx context.Context, id, status, result string) error {
+	return s.UpdateChatTurn(ctx, id, convo.ChatTurnSet{Status: &status, Result: &result})
+}
+
+// ReclaimInterruptedTurns 把上一进程遗留的非终态轮次标记为中断，返回处理条数。
+// 中断轮次不自动重放：已发生的外部副作用不追溯、不重复执行。
+func (s *convoStore) ReclaimInterruptedTurns(ctx context.Context) (int, error) {
+	res, err := s.w.db.NewUpdate().Model((*convo.ChatTurn)(nil)).
+		Set("status = ?", TurnStatusInterrupted).
+		Where("status = ? OR status = ?", TurnStatusQueued, TurnStatusRunning).
+		Exec(ctx)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// isDuplicateKey 判断错误是否为唯一约束冲突（PG SQLSTATE 23505）。
+func isDuplicateKey(err error) bool {
+	var pgErr PGError
+	return errors.As(err, &pgErr) && pgErr.Field('C') == "23505"
 }

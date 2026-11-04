@@ -237,12 +237,10 @@ func (p *WSChannel) onMessage(event *larkim.P2MessageReceiveV1) error {
 		"content_len", len(ptrStr(msg.Content)),
 	)
 
-	// Deduplicate
+	// Deduplicate: Redis 只作提示层，是否跳过由 PG 轮次状态决定
 	if p.dedup != nil {
-		isDup, _ := p.dedup.IsDuplicate(context.Background(), "feishu", messageID)
-		if isDup {
-			slog.Info("feishu-ws: skipping duplicate message", "msg_id", messageID)
-			return nil
+		if isDup, _ := p.dedup.IsDuplicate(context.Background(), "feishu", messageID); isDup {
+			slog.Info("feishu-ws: duplicate message seen", "msg_id", messageID)
 		}
 	}
 

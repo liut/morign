@@ -72,6 +72,8 @@ type chatRequest struct {
 	cs       stores.Conversation
 	prompt   string
 	skills   []string
+	turnID   string // 幂等轮次编号
+	retry    bool   // 重试或重新生成：按新请求执行，不参与幂等判定
 }
 
 func (a *api) prepareChatRequest(ctx context.Context, param *ChatRequest) *chatRequest {
@@ -88,15 +90,19 @@ func (a *api) prepareChatRequest(ctx context.Context, param *ChatRequest) *chatR
 	}
 
 	// 最后一条特殊处理：如果是重试或 Regenerate，完全跳过这一条历史
-	var skipLast bool
+	var skipLast, retry bool
 	if len(history) > 0 {
 		if last := history[len(history)-1]; last.ChatItem != nil {
 			isRetry := last.ChatItem.User == param.Prompt
 			if isRetry || param.Regenerate {
 				logger().Debug("skip last history", "retry", isRetry, "regenerate", param.Regenerate)
 				skipLast = true
+				retry = true
 			}
 		}
+	}
+	if param.Regenerate {
+		retry = true
 	}
 
 	messages := chatMessages(sysMsg, nil, history, param.Prompt, skipLast)
@@ -108,6 +114,7 @@ func (a *api) prepareChatRequest(ctx context.Context, param *ChatRequest) *chatR
 		cs:       cs,
 		prompt:   param.Prompt,
 		skills:   param.Skills,
+		retry:    retry,
 	}
 }
 
@@ -140,12 +147,32 @@ func (a *api) postChat(w http.ResponseWriter, r *http.Request) {
 
 	logger().Info("chat", "csid", param.GetConversionID(), "msgs", len(ccr.messages), "prompt", param.Prompt, "ip", r.RemoteAddr)
 
+	// 幂等：同一幂等键的重复投递只执行一次模型调用。
+	gate, err := a.acquireChatTurn(r.Context(), &param, ccr)
+	if err != nil {
+		logger().Warn("chat: acquire turn failed", "err", err)
+		apiFail(w, r, 503, err)
+		return
+	}
+	switch {
+	case gate.Replay:
+		a.replyCached(w, r, ccr, gate.Cached, isSSE)
+		return
+	case !gate.Proceed:
+		apiFail(w, r, 409, errors.New("请求正在处理中，请稍后重试"))
+		return
+	}
+	ccr.turnID = gate.ID
+
 	if isStream {
 		a.handleSSEStream(w, r, loop, ccr)
 		return
 	}
 
-	answer, err := loop.RunNonStreaming(r.Context(), ccr.messages, ccr.tools)
+	tracker := newTurnToolTracker()
+	tctx := contextWithTurnTracker(r.Context(), tracker)
+	answer, err := loop.RunNonStreaming(tctx, ccr.messages, ccr.tools)
+	finishTurn(r.Context(), a.sto.Convo(), ccr.turnID, answer, tracker.called.Load(), err)
 	if err != nil {
 		apiFail(w, r, 500, err)
 		return
@@ -198,6 +225,8 @@ func (a *api) handleSSEStream(w http.ResponseWriter, r *http.Request, loop *agen
 	w.(http.Flusher).Flush()
 
 	cctx := stores.ContextWithConvoID(r.Context(), ccr.cs.GetID())
+	tracker := newTurnToolTracker()
+	cctx = contextWithTurnTracker(cctx, tracker)
 
 	var (
 		answer         string
@@ -206,15 +235,18 @@ func (a *api) handleSSEStream(w http.ResponseWriter, r *http.Request, loop *agen
 		finish         llm.FinishReason
 		chunkIdx       int
 		lastWriteEmpty bool
+		runErr         error
 	)
 
 	for event, err := range loop.Run(cctx, ccr.messages, ccr.tools) {
 		if err != nil {
 			logger().Info("agent loop error", "err", err)
+			runErr = err
 			break
 		}
 
 		if event.ToolResult != nil {
+			tracker.called.Store(true)
 			continue
 		}
 
@@ -275,6 +307,8 @@ func (a *api) handleSSEStream(w http.ResponseWriter, r *http.Request, loop *agen
 	}
 
 	logger().Info("stream response", "answer_len", len(answer), "finish", finish)
+
+	finishTurn(r.Context(), a.sto.Convo(), ccr.turnID, answer, tracker.called.Load(), runErr)
 
 	if len(answer) > 0 {
 		if err := a.rnr.Persist(r.Context(), ccr.cs.GetID(), &llm.Event{

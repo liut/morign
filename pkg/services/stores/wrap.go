@@ -28,6 +28,7 @@ type PageSpec = comm.PageSpec
 type ModelSpec = pgx.ModelSpec
 type TextSearchSpec = pgx.TextSearchSpec
 type StringsDiff = pgx.StringsDiff
+type PGError = pgx.PGError
 
 // vars
 // nolint
@@ -182,6 +183,13 @@ func InitDB(ctx context.Context) error {
 	if err := db.RunMigrations(ctx); err != nil {
 		logger().Error("RunMigrations fail", "err", err)
 		return err
+	}
+
+	// 上个进程遗留的非终态轮次一律标记为中断：副作用可能已发生，不自动重放。
+	if n, err := Sgt().convoStore.ReclaimInterruptedTurns(ctx); err != nil {
+		logger().Warn("reclaim interrupted turns fail", "err", err)
+	} else if n > 0 {
+		logger().Info("reclaimed interrupted turns", "count", n)
 	}
 
 	return nil

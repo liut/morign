@@ -329,12 +329,11 @@ func (p *WSChannel) handleMsgCallback(frame wsFrame) {
 
 	reqID := frame.Headers.ReqID
 
+	// Redis 去重降级为提示层：命中只记录不阻断，是否跳过由 PG 轮次状态决定。
 	if p.dedup != nil {
 		ctx := context.Background()
-		isDup, _ := p.dedup.IsDuplicate(ctx, "wecom", body.MsgID)
-		if isDup {
-			slog.Info("wecom-ws: skipping duplicate message", "msg_id", body.MsgID)
-			return
+		if isDup, _ := p.dedup.IsDuplicate(ctx, "wecom", body.MsgID); isDup {
+			slog.Info("wecom-ws: duplicate message seen", "msg_id", body.MsgID)
 		}
 	}
 

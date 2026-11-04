@@ -108,7 +108,7 @@ func newapi(sto stores.Storage) *api {
 		llm:      llmClient,
 		preset:   preset,
 		toolreg:  toolreg,
-		toolExec: agent.NewToolExecutor(toolreg),
+		toolExec: newToolExecutor(toolreg),
 		rnr:      runner.New(stores.NewSessionStore(sto), stores.NewHistoryStore(sto)),
 	}
 }

@@ -370,6 +370,136 @@ func (in *UsageRecordSet) MetaAddKVs(args ...any) *UsageRecordSet {
 	return in
 }
 
+// consts of ChatTurn 聊天轮次
+const (
+	ChatTurnTable = "convo_chat_turn"
+	ChatTurnAlias = "ct"
+	ChatTurnLabel = "chatTurn"
+	ChatTurnTypID = "convoChatTurn"
+)
+
+// ChatTurn 聊天轮次
+type ChatTurn struct {
+	comm.BaseModel `bun:"table:convo_chat_turn,alias:ct" json:"-"`
+
+	comm.DefaultModel
+
+	ChatTurnBasic
+
+	comm.MetaField
+} // @name convoChatTurn
+
+type ChatTurnBasic struct {
+	// 会话编号
+	SessionID oid.OID `bson:"session_id" bun:",notnull" extensions:"x-order=A" json:"session" pg:",notnull" swaggertype:"string"`
+	// 幂等键
+	IdempotencyKey string `bson:"idempotencyKey" bun:",notnull,type:varchar(255),unique:uk_turn_idem_key" extensions:"x-order=B" form:"idempotencyKey" json:"idempotencyKey" pg:",notnull,type:varchar(255),unique:uk_turn_idem_key"`
+	// 来源 web/channel
+	Source string `bson:"source" bun:",notnull,type:varchar(32)" extensions:"x-order=C" form:"source" json:"source" pg:",notnull,type:varchar(32)"`
+	// 状态 queued/running/succeeded/failed/cancelled/interrupted
+	Status string `bson:"status" bun:",notnull,type:varchar(16)" extensions:"x-order=D" form:"status" json:"status" pg:",notnull,type:varchar(16)"`
+	// 请求摘要
+	RequestDigest string `bson:"requestDigest" bun:",notnull,type:varchar(64)" extensions:"x-order=E" form:"requestDigest" json:"requestDigest" pg:",notnull,type:varchar(64)"`
+	// 归属用户
+	OwnerID oid.OID `bson:"owner_id" bun:"owner_id,notnull,type:bigint" extensions:"x-order=F" json:"ownerId" pg:"owner_id,notnull,type:bigint" swaggertype:"string"`
+	// 最终结果
+	Result string `bson:"result" bun:",notnull,type:text" extensions:"x-order=G" form:"result" json:"result" pg:",notnull,type:text"`
+	// for meta update
+	MetaDiff *comm.MetaDiff `bson:"-" bun:"-" json:"metaUp,omitempty" pg:"-" swaggerignore:"true"`
+} // @name convoChatTurnBasic
+
+type ChatTurns []ChatTurn
+
+// Creating function call to it's inner fields defined hooks
+func (z *ChatTurn) Creating() error {
+	if z.IsZeroID() {
+		z.SetID(oid.NewID(oid.OtEvent))
+	}
+
+	return z.DefaultModel.Creating()
+}
+func NewChatTurnWithBasic(in ChatTurnBasic) *ChatTurn {
+	obj := &ChatTurn{
+		ChatTurnBasic: in,
+	}
+	_ = obj.MetaUp(in.MetaDiff)
+	return obj
+}
+func NewChatTurnWithID(id any) *ChatTurn {
+	obj := new(ChatTurn)
+	_ = obj.SetID(id)
+	return obj
+}
+func (_ *ChatTurn) IdentityLabel() string { return ChatTurnLabel }
+func (_ *ChatTurn) IdentityModel() string { return ChatTurnTypID }
+func (_ *ChatTurn) IdentityTable() string { return ChatTurnTable }
+func (_ *ChatTurn) IdentityAlias() string { return ChatTurnAlias }
+
+type ChatTurnSet struct {
+	// 会话编号
+	SessionID *string `extensions:"x-order=A" json:"session"`
+	// 幂等键
+	IdempotencyKey *string `extensions:"x-order=B" json:"idempotencyKey"`
+	// 来源 web/channel
+	Source *string `extensions:"x-order=C" json:"source"`
+	// 状态 queued/running/succeeded/failed/cancelled/interrupted
+	Status *string `extensions:"x-order=D" json:"status"`
+	// 请求摘要
+	RequestDigest *string `extensions:"x-order=E" json:"requestDigest"`
+	// 归属用户
+	OwnerID *string `extensions:"x-order=F" json:"ownerId"`
+	// 最终结果
+	Result *string `extensions:"x-order=G" json:"result"`
+	// for meta update
+	MetaDiff *comm.MetaDiff `json:"metaUp,omitempty" swaggerignore:"true"`
+} // @name convoChatTurnSet
+
+func (z *ChatTurn) SetWith(o ChatTurnSet) {
+	if o.SessionID != nil {
+		if id := oid.Cast(*o.SessionID); z.SessionID != id {
+			z.LogChangeValue("session_id", z.SessionID, id)
+			z.SessionID = id
+		}
+	}
+	if o.IdempotencyKey != nil && z.IdempotencyKey != *o.IdempotencyKey {
+		z.LogChangeValue("idempotency_key", z.IdempotencyKey, o.IdempotencyKey)
+		z.IdempotencyKey = *o.IdempotencyKey
+	}
+	if o.Source != nil && z.Source != *o.Source {
+		z.LogChangeValue("source", z.Source, o.Source)
+		z.Source = *o.Source
+	}
+	if o.Status != nil && z.Status != *o.Status {
+		z.LogChangeValue("status", z.Status, o.Status)
+		z.Status = *o.Status
+	}
+	if o.RequestDigest != nil && z.RequestDigest != *o.RequestDigest {
+		z.LogChangeValue("request_digest", z.RequestDigest, o.RequestDigest)
+		z.RequestDigest = *o.RequestDigest
+	}
+	if o.OwnerID != nil {
+		if id := oid.Cast(*o.OwnerID); z.OwnerID != id {
+			z.LogChangeValue("owner_id", z.OwnerID, id)
+			z.OwnerID = id
+		}
+	}
+	if o.Result != nil && z.Result != *o.Result {
+		z.LogChangeValue("result", z.Result, o.Result)
+		z.Result = *o.Result
+	}
+	if o.MetaDiff != nil && z.MetaUp(o.MetaDiff) {
+		z.SetChange("meta")
+	}
+}
+func (in *ChatTurnBasic) MetaAddKVs(args ...any) *ChatTurnBasic {
+	in.MetaDiff = comm.MetaDiffAddKVs(in.MetaDiff, args...)
+	return in
+}
+func (in *ChatTurnSet) MetaAddKVs(args ...any) *ChatTurnSet {
+	in.MetaDiff = comm.MetaDiffAddKVs(in.MetaDiff, args...)
+	return in
+}
+
 // consts of User 用户
 const (
 	UserTable = "convo_user"

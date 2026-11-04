@@ -136,6 +136,55 @@ models:
     oidcat: event
     specNs: convo
 
+  - name: ChatTurn
+    comment: '聊天轮次'
+    tableTag: 'convo_chat_turn,alias:ct'
+    fields:
+      - type: comm.DefaultModel
+      - comment: 会话编号
+        name: SessionID
+        type: oid.OID
+        tags: {bson: 'session_id', json: 'session', pg: ',notnull'}
+        isset: true
+        query: 'equal'
+      - comment: 幂等键
+        name: IdempotencyKey
+        type: string
+        tags: {bson: 'idempotencyKey', json: 'idempotencyKey', pg: ',notnull,type:varchar(255),unique:uk_turn_idem_key'}
+        isset: true
+        query: 'equal'
+      - comment: 来源 web/channel
+        name: Source
+        type: string
+        tags: {bson: 'source', json: 'source', pg: ',notnull,type:varchar(32)'}
+        isset: true
+        query: 'equal'
+      - comment: 状态 queued/running/succeeded/failed/cancelled/interrupted
+        name: Status
+        type: string
+        tags: {bson: 'status', json: 'status', pg: ',notnull,type:varchar(16)'}
+        isset: true
+        query: 'equal'
+      - comment: 请求摘要
+        name: RequestDigest
+        type: string
+        tags: {bson: 'requestDigest', json: 'requestDigest', pg: ',notnull,type:varchar(64)'}
+        isset: true
+      - comment: 归属用户
+        name: OwnerID
+        type: oid.OID
+        tags: {bson: 'owner_id', json: 'ownerId', pg: 'owner_id,notnull,type:bigint'}
+        isset: true
+        query: 'equal'
+      - comment: 最终结果
+        name: Result
+        type: string
+        tags: {bson: 'result', json: 'result', pg: ',notnull,type:text'}
+        isset: true
+      - type: comm.MetaField
+    oidcat: event
+    specNs: convo
+
   - name: User
     comment: '用户 来自 OAuth SP 的拷贝'
     tableTag: 'convo_user,alias:u'
@@ -284,6 +333,7 @@ stores:
       - { name: ThirdUser, type: LGD }
       - { name: Memory, type: LGCUD }
       - { name: UsageRecord, type: LGCD }
+      - { name: ChatTurn, type: LGCUD }
 
 
 webcode: chi

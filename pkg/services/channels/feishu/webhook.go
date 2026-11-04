@@ -276,12 +276,10 @@ func (p *HTTPChannel) onWebhookMessage(event *feishuWebhookEvent) {
 		"content_len", len(msg.Content),
 	)
 
-	// Deduplicate
+	// Deduplicate: Redis 只作提示层，是否跳过由 PG 轮次状态决定
 	if p.dedup != nil {
-		isDup, _ := p.dedup.IsDuplicate(context.Background(), "feishu", messageID)
-		if isDup {
-			slog.Info("feishu-webhook: skipping duplicate message", "msg_id", messageID)
-			return
+		if isDup, _ := p.dedup.IsDuplicate(context.Background(), "feishu", messageID); isDup {
+			slog.Info("feishu-webhook: duplicate message seen", "msg_id", messageID)
 		}
 	}
 

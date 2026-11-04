@@ -1,7 +1,7 @@
 ---
 title: feat: 聊天轮次的幂等与状态机
 type: feat
-status: active
+status: completed
 date: 2026-10-29
 origin: docs/reports/2026-10-27-whip-design-review.md
 ---
@@ -283,6 +283,15 @@ Web 侧缺省派生意味着：同一会话内连续发送**内容完全相同**
   R2 明确写「Web 侧用请求携带的幂等键」，而 Deferred 段又说「显式 key 作为 API 字段加入」留待后续，U4 也没说明是否新增请求字段。实现者按 R2 读会加字段，按 Scope Boundaries 读则不加，两种做法都能自圆其说却给出不同的 API。
 
   <!-- dedup-key: section="requirements r2 scope boundaries deferred to followup work" title="web 侧显式幂等键的 api 字段名与是否本轮交付" evidence="- R2. 轮次有持久化的幂等键：频道侧用平台 `message_id`，Web 侧用请求携带的幂等键（缺省时按请求摘要派生）。" -->
+
+### Resolved During Implementation
+
+- **轮次写入失败时 fail-open 还是 fail-closed** → **fail-closed**。拿不到幂等声明就不进入模型与副作用工具，向调用方返回可重试错误（Web 503、频道侧回错误提示）。R3/R8 是无条件要求，Risks 表的「降级为直接执行」会在数据库抖动时同时打破这两条。
+- **RequestDigest 保留还是删除** → **保留并真正使用**。同键但摘要不同视为冲突（`ErrTurnConflict`），不复用既有轮次的结果，避免用户改了提问却拿到旧答案。
+- **Web 侧显式幂等键的 API 字段** → **本轮不加**。只交付派生键（`sha256(owner_id + session_id + prompt + 请求摘要)`），`ChatRequest` 契约不变，不触发 swagger 重新生成。
+- **convo_chat_turn 的保留期与级联清理** → **本轮不做定时清理**。轮次表随会话删除一并清理的归属留作后续；模型最终答案因此在 PG 中长期留存，删除会话时需一并删除对应轮次（本轮未接线）。
+- **多副本租约字段（LeaseOwner / LeaseExpiresAt）** → **本轮不实现**。启动时把全部 `queued`/`running` 轮次标记为 `interrupted`，在单副本部署下语义正确；多副本部署时会把其它副本的在途轮次误标为中断，属已知残留。
+- **生成的 `CreateChatTurn` 不可直接用于幂等仲裁** → codegen 对带 `unique` 的列生成 `ON CONFLICT DO UPDATE`（同键 upsert），不暴露唯一约束冲突。`stores.CreateTurn` 改为普通插入，用 `errors.As` 取 `PGError` 并比对 SQLSTATE `23505` 判定为 `ErrDuplicate`。
 
 
 ---
