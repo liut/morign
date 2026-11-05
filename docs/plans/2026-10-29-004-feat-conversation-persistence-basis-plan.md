@@ -338,6 +338,8 @@ r.invokers[ToolNameToolResultRead] = r.callToolResultRead
   - U2：`historyAdapter.AppendEvent` 扩展为原始记录写入路径（用户消息、助手消息、工具记录）；三条入口（Web SSE、Web 非流式、频道）统一注入轮次与会话锚点并转发工具事件；非流式链路经 `AgentLoopConfig.OnToolResult` 回调补齐工具轨迹
   - U3：截断处（`spillToolResult`）是 `ToolRecord` 的唯一写入方，回读 handle 即该行编号；新增内置工具 `tool_result_read(handle, offset, limit)`，读取强制同会话同归属
 - **增量 B（U4–U6）：未开始**——上下文投影与真实 token 预算待增量 A 进入生产并稳定后再做
+  - **前置条件已补齐**：U5 以 `Usage.InputTokens` 为裁剪依据，但 Anthropic provider 的 `input_tokens` 原先只出现在 `message_start` 的 `message.usage` 里、从未被解析，落库恒为 0（`UsageRecord` 也因 Done 事件不带 `Usage` 而从未写入 Anthropic 路径的记录）。该缺陷已在 `fix(llm): Anthropic 结束事件补上 Usage` 中修复。
+  - **仍缺的写入路径**：频道链路（`pkg/web/api/handle_platform.go`）当前不写 `UsageRecord`，非流式链路同样只在 Web SSE 侧有写入。U5 要求的「三条链路都写入 UsageRecord」尚未达成。
 
 ### U1. 契约与表结构
 

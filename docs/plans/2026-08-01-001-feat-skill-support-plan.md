@@ -172,6 +172,14 @@ flowchart TB
 
 ---
 
+## 交付进度
+
+- **U1–U7：已落地** — `docs/skills.yaml` 的 `agent_skill_file` 分表、`pkg/services/stores/skills_x.go` 的 `LoadForName` 统一可见性加载器、`pkg/services/tools/skills.go` 的四个 `skill_*` 工具、`pkg/web/api/handle_skills_x.go` 的用户自建 REST 均已实现。
+- **R7：未落地** — `pkg/services/agent/skill_inject.go` 的 `BuildSkillIndex` 只注入 name+description 元数据，没有「技能清单小于阈值时直接注入 SKILL.md 全文」的逻辑，`pkg/settings/config.go` 也无对应阈值配置。弱模型不主动调 `skill_read` 就拿不到技能正文。
+  - 已有可复用路径：同文件的 `SkillPromptByCommand` 已实现全文加载，可直接复用 `LoadForName`。
+
+---
+
 ## Implementation Units
 
 ### U1. docs/skills.yaml 与 codegen 骨架

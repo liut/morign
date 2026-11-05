@@ -1,7 +1,7 @@
 ---
 title: 添加 channelPrompt 字段到 Preset
 type: feat
-status: active
+status: completed
 date: 2026-04-02
 ---
 

@@ -1,7 +1,7 @@
 ---
 title: NewConversation 添加 channel 参数并从 sessionKey 提取
 type: feat
-status: active
+status: completed
 date: 2026-04-02
 ---
 

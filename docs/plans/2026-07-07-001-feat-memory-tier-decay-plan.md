@@ -209,6 +209,14 @@ memory_recall 返回结果后
 
 ---
 
+## 交付进度
+
+- **U1–U6：已落地** — `docs/convo.yaml` 的分层字段、`pkg/models/convo/memory_eval.go` 的 `EvaluateImportance`、`pkg/models/convo/memory_decay.go` 的 `CalcRetention` / `RouteTier`、`pkg/services/stores/convo_x.go` 的衰减重排 / 写入分层 / 强化晋升 / 向量清理、`pkg/settings/config.go` 的阈值配置均已实现。
+- **U7（集成测试）：未落地** — 缺一条「写入 → 分层 → recall 衰减重排 → access_count 递增 → tier 晋升 → forget 清向量」的端到端链路测试，目前只有 `pkg/models/convo/memory_decay_test.go` 的单元测试。
+  - 已有基础设施：`pkg/services/stores/integration_test.go` 的 mock embedding 与 `InitDB()`，可照 `TestIntegration_MemoryCRUD` 扩一条。这套逻辑涉及时钟与阈值配置，无集成测试时调参风险高。
+
+---
+
 ## Implementation Units
 
 ### U1. 数据模型扩展

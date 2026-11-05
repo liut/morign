@@ -2,7 +2,7 @@
 date: 2026-06-03
 type: feat
 topic: preset-env-expansion
-status: active
+status: completed
 origin: docs/brainstorms/2026-06-03-preset-env-expansion-requirements.md
 ---
 

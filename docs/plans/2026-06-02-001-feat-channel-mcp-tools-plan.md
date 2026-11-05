@@ -43,6 +43,13 @@ status: active
 
 ---
 
+## 交付进度
+
+- **U2–U5：已落地** — `pkg/models/mcps/mcps_x.go` 的 `ContextWithChannel`、`pkg/models/aigc/preset.go` 的 `MCPServerConfig` / `MCPServers`、`pkg/services/tools/registry.go` 的 `channelTools` 映射与频道隔离注册、`pkg/web/api/handle_platform.go` 的注册与 `RemoveChannelTools` 均已实现。
+- **U6（频道 MCP 健康查询端点）：未落地** — `pkg/services/tools/registry.go` 的 `ChannelServerStatuses` 已实现，但 `pkg/web/api` 没有对应的 `regHI` 路由把它暴露出去，目前只有 `pkg/services/tools/zero_tools_test.go` 的单测覆盖。另 U4 提出的 `RemoveChannelServer` 也未实现。
+
+---
+
 ## Implementation Units
 
 ### U1. 修复 Registry 现有竞态条件

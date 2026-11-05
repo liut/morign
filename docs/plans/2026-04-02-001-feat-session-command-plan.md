@@ -1,7 +1,7 @@
 ---
 title: feat: 添加会话指令系统 (/new, /clear)
 type: feat
-status: active
+status: completed
 date: 2026-04-02
 ---
 

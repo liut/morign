@@ -1,7 +1,7 @@
 ---
 title: "fix: 平台会话与 Conversation 映射及历史保持"
 type: fix
-status: active
+status: completed
 date: 2026-03-26
 origin: docs/plans/2026-03-25-001-feat-platform-adapter-layer-plan.md
 ---

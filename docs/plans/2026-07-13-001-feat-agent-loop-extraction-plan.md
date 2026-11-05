@@ -1,7 +1,7 @@
 ---
 title: Agent 循环解耦与工具执行增强
 type: refactor
-status: active
+status: completed
 date: 2026-07-13
 origin: docs/brainstorms/2026-07-13-agent-loop-extraction-requirements.md
 ---

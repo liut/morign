@@ -1,7 +1,7 @@
 ---
 title: "feat: Agent API Capability 向量检索"
 type: feat
-status: active
+status: completed
 date: 2026-04-17
 origin: docs/brainstorms/2026-04-10-agent-api-discovery-requirements.md
 ---
