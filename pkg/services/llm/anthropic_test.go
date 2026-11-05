@@ -271,6 +271,58 @@ func TestAnthropicProviderStreamChatWithTools(t *testing.T) {
 	}
 }
 
+func TestAnthropicProviderStreamChatUsage(t *testing.T) {
+	// 结束事件必须携带 Usage，否则下游在 Done 分支里取不到用量，不会落 UsageRecord。
+	// input_tokens 只在 message_start 给出，output_tokens 只在 message_delta 给出。
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+
+		_, _ = io.WriteString(w, "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-3-5-sonnet-20241022\",\"usage\":{\"input_tokens\":12,\"output_tokens\":0}}}\n\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"id\":\"block_1\"}}\n\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":7}}\n\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"message_stop\"}\n\n")
+	}))
+	defer server.Close()
+
+	p := newAnthropicProvider()
+	cfg := &config{
+		baseURL: server.URL,
+		apiKey:  "test-key",
+		model:   "claude-3-5-sonnet-20241022",
+	}
+
+	var done *Event
+	for event, err := range p.StreamChat(context.Background(), cfg, []Message{
+		{Role: RoleUser, Content: "Hi"},
+	}, nil) {
+		if err != nil {
+			t.Fatalf("stream error = %v", err)
+		}
+		if event.Done {
+			done = event
+		}
+	}
+
+	if done == nil {
+		t.Fatal("expected a Done event")
+	}
+	if done.Usage == nil {
+		t.Fatal("Done event carries no Usage")
+	}
+	if done.Usage.InputTokens != 12 {
+		t.Errorf("InputTokens = %v, want 12", done.Usage.InputTokens)
+	}
+	if done.Usage.OutputTokens != 7 {
+		t.Errorf("OutputTokens = %v, want 7", done.Usage.OutputTokens)
+	}
+	if done.Usage.TotalTokens != 19 {
+		t.Errorf("TotalTokens = %v, want 19", done.Usage.TotalTokens)
+	}
+}
+
 func TestAnthropicProviderEmbedding(t *testing.T) {
 	// 测试 Embedding 不支持
 	p := newAnthropicProvider()

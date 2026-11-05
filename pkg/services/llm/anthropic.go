@@ -229,7 +229,7 @@ func (p *anthropicProvider) parseStreamResponse(body io.Reader, push Pusher, deb
 	var currentToolCalls []ToolCall
 	var currentText strings.Builder
 	var thinkContent string
-	var stopReason FinishReason
+	var state anthropicStreamState
 
 	bufReader := bufio.NewReaderSize(body, 1024)
 
@@ -237,7 +237,7 @@ func (p *anthropicProvider) parseStreamResponse(body io.Reader, push Pusher, deb
 		line, err := bufReader.ReadBytes('\n')
 		if err != nil {
 			if err == io.EOF {
-				push(&Event{Done: true}, nil)
+				push(&Event{Done: true, StopReason: state.stopReason, Usage: state.usage}, nil)
 			} else {
 				logger().Info("read stream response failed", "err", err)
 				return fmt.Errorf("read: %w", err)
@@ -261,7 +261,7 @@ func (p *anthropicProvider) parseStreamResponse(body io.Reader, push Pusher, deb
 
 		data := bytes.TrimSpace(line[5:])
 		if string(data) == "[DONE]" {
-			push(&Event{Done: true}, nil)
+			push(&Event{Done: true, StopReason: state.stopReason, Usage: state.usage}, nil)
 			return nil
 		}
 
@@ -270,7 +270,7 @@ func (p *anthropicProvider) parseStreamResponse(body io.Reader, push Pusher, deb
 			continue
 		}
 
-		done, toolCalls := p.handleStreamEvent(se, &currentText, currentToolCalls, push, logDir, model, messages, tools, &thinkContent, &stopReason)
+		done, toolCalls := p.handleStreamEvent(se, &currentText, currentToolCalls, push, logDir, model, messages, tools, &thinkContent, &state)
 		currentToolCalls = toolCalls
 
 		if done {
@@ -318,8 +318,9 @@ type streamEvent struct {
 		StopReason  string `json:"stop_reason,omitempty"`
 	} `json:"delta,omitempty"`
 	Message *struct {
-		ID    string `json:"id,omitempty"`
-		Model string `json:"model,omitempty"`
+		ID    string          `json:"id,omitempty"`
+		Model string          `json:"model,omitempty"`
+		Usage *anthropicUsage `json:"usage,omitempty"`
 	} `json:"message,omitempty"`
 	Usage *anthropicUsage `json:"usage,omitempty"`
 }
@@ -334,11 +335,17 @@ func (p *anthropicProvider) parseStreamEvent(data []byte) (streamEvent, error) {
 	return event, nil
 }
 
+// anthropicStreamState 承载一轮流式调用中需要跨事件传递的状态。
+type anthropicStreamState struct {
+	stopReason FinishReason
+	usage      *Usage
+}
+
 // handleStreamEvent 处理流事件，通过 push 直接产出 *Event。返回是否结束及更新后的 toolCalls。
-// stopReason 在 message_delta 算出、message_stop 复用：结束事件必须自带 StopReason。
+// state 在 message_delta 算出、message_stop 复用：结束事件必须自带 StopReason 与 Usage。
 func (p *anthropicProvider) handleStreamEvent(se streamEvent, currentText *strings.Builder, currentToolCalls []ToolCall,
 	push Pusher, logDir, model string, messages []Message, tools []ToolDefinition, thinkContent *string,
-	stopReason *FinishReason) (
+	state *anthropicStreamState) (
 	bool, []ToolCall) {
 	switch se.Type {
 	case "content_block_start":
@@ -403,13 +410,21 @@ func (p *anthropicProvider) handleStreamEvent(se streamEvent, currentText *strin
 		} else if len(currentToolCalls) > 0 {
 			sr = "tool_calls" // 为了兼容 OpenAI
 		}
-		*stopReason = sr
+		state.stopReason = sr
+		// output_tokens 在 message_delta 里给出，与 message_start 的 input_tokens 合并。
+		if u := se.Usage.toUsage(); u != nil {
+			if state.usage == nil {
+				state.usage = &Usage{}
+			}
+			state.usage.OutputTokens = u.OutputTokens
+			state.usage.TotalTokens = state.usage.InputTokens + state.usage.OutputTokens
+		}
 		if !push(&Event{
 			ID:         NewEventID(),
 			Timestamp:  time.Now(),
 			ToolCalls:  currentToolCalls,
 			StopReason: sr,
-			Usage:      se.Usage.toUsage(),
+			Usage:      state.usage,
 
 		}, nil) {
 			return true, currentToolCalls
@@ -419,7 +434,7 @@ func (p *anthropicProvider) handleStreamEvent(se streamEvent, currentText *strin
 				Model:      model,
 				Messages:   messages,
 				Tools:      tools,
-				Usage:      se.Usage.toUsage(),
+				Usage:      state.usage,
 				Response:   currentText.String(),
 				ToolCalls:  currentToolCalls,
 				Think:      *thinkContent,
@@ -432,16 +447,25 @@ func (p *anthropicProvider) handleStreamEvent(se streamEvent, currentText *strin
 			Timestamp:  time.Now(),
 			Done:       true,
 			ToolCalls:  currentToolCalls,
-			StopReason: *stopReason,
+			StopReason: state.stopReason,
+			Usage:      state.usage,
 		}, nil)
 		return true, currentToolCalls
 	case "message_start":
 		if se.Message != nil {
+			// input_tokens 只在 message_start 里给出，先存下等 message_delta 补 output_tokens。
+			if se.Message.Usage != nil {
+				state.usage = &Usage{
+					InputTokens: se.Message.Usage.InputTokens,
+					TotalTokens: se.Message.Usage.InputTokens,
+				}
+			}
 			push(&Event{
 				ID:         NewEventID(),
 				Timestamp:  time.Now(),
 				Model:      se.Message.Model,
 				ResponseID: se.Message.ID,
+				Usage:      state.usage,
 
 			}, nil)
 		}
