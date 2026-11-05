@@ -220,6 +220,57 @@ func TestAnthropicProviderStreamChat(t *testing.T) {
 	}
 }
 
+func TestAnthropicProviderStreamChatWithTools(t *testing.T) {
+	// 结束事件必须同时携带 Done 与 StopReason，否则下游写不出 tool_calls 事件。
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+
+		_, _ = io.WriteString(w, "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-3-5-sonnet-20241022\"}}\n\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"get_weather\",\"input\":{}}}\n\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"location\\\":\\\"Beijing\\\"}\"}}\n\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":5}}\n\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"message_stop\"}\n\n")
+	}))
+	defer server.Close()
+
+	p := newAnthropicProvider()
+	cfg := &config{
+		baseURL: server.URL,
+		apiKey:  "test-key",
+		model:   "claude-3-5-sonnet-20241022",
+	}
+
+	var done *Event
+	for event, err := range p.StreamChat(context.Background(), cfg, []Message{
+		{Role: RoleUser, Content: "Weather in Beijing?"},
+	}, nil) {
+		if err != nil {
+			t.Fatalf("stream error = %v", err)
+		}
+		if event.Done {
+			done = event
+		}
+	}
+
+	if done == nil {
+		t.Fatal("expected a Done event")
+	}
+	if done.StopReason != FinishReasonToolCalls {
+		t.Errorf("StopReason = %q, want %q", done.StopReason, FinishReasonToolCalls)
+	}
+	if len(done.ToolCalls) != 1 {
+		t.Fatalf("tool calls length = %v, want 1", len(done.ToolCalls))
+	}
+	if done.ToolCalls[0].Function.Name != "get_weather" {
+		t.Errorf("tool name = %v, want get_weather", done.ToolCalls[0].Function.Name)
+	}
+	if got := string(done.ToolCalls[0].Function.Arguments); got != `{"location":"Beijing"}` {
+		t.Errorf("tool arguments = %v, want %v", got, `{"location":"Beijing"}`)
+	}
+}
+
 func TestAnthropicProviderEmbedding(t *testing.T) {
 	// 测试 Embedding 不支持
 	p := newAnthropicProvider()

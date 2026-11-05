@@ -28,7 +28,7 @@ func StreamChat(ctx context.Context, loop *AgentLoop, messages []llm.Message, to
 		if event.Think != "" && cb.OnThink != nil {
 			cb.OnThink(event.Think)
 		}
-		if event.StopReason == llm.FinishReasonToolCalls {
+		if event.Done && event.StopReason == llm.FinishReasonToolCalls {
 			cb.OnThink("\n")
 		}
 	}

@@ -229,6 +229,7 @@ func (p *anthropicProvider) parseStreamResponse(body io.Reader, push Pusher, deb
 	var currentToolCalls []ToolCall
 	var currentText strings.Builder
 	var thinkContent string
+	var stopReason FinishReason
 
 	bufReader := bufio.NewReaderSize(body, 1024)
 
@@ -269,7 +270,7 @@ func (p *anthropicProvider) parseStreamResponse(body io.Reader, push Pusher, deb
 			continue
 		}
 
-		done, toolCalls := p.handleStreamEvent(se, &currentText, currentToolCalls, push, logDir, model, messages, tools, &thinkContent)
+		done, toolCalls := p.handleStreamEvent(se, &currentText, currentToolCalls, push, logDir, model, messages, tools, &thinkContent, &stopReason)
 		currentToolCalls = toolCalls
 
 		if done {
@@ -334,8 +335,10 @@ func (p *anthropicProvider) parseStreamEvent(data []byte) (streamEvent, error) {
 }
 
 // handleStreamEvent 处理流事件，通过 push 直接产出 *Event。返回是否结束及更新后的 toolCalls。
+// stopReason 在 message_delta 算出、message_stop 复用：结束事件必须自带 StopReason。
 func (p *anthropicProvider) handleStreamEvent(se streamEvent, currentText *strings.Builder, currentToolCalls []ToolCall,
-	push Pusher, logDir, model string, messages []Message, tools []ToolDefinition, thinkContent *string) (
+	push Pusher, logDir, model string, messages []Message, tools []ToolDefinition, thinkContent *string,
+	stopReason *FinishReason) (
 	bool, []ToolCall) {
 	switch se.Type {
 	case "content_block_start":
@@ -394,17 +397,18 @@ func (p *anthropicProvider) handleStreamEvent(se streamEvent, currentText *strin
 	case "content_block_stop":
 		// 内容块结束
 	case "message_delta":
-		stopReason := FinishReason(se.Delta.StopReason)
-		if stopReason == "end_turn" {
-			stopReason = "stop"
+		sr := FinishReason(se.Delta.StopReason)
+		if sr == "end_turn" {
+			sr = "stop"
 		} else if len(currentToolCalls) > 0 {
-			stopReason = "tool_calls" // 为了兼容 OpenAI
+			sr = "tool_calls" // 为了兼容 OpenAI
 		}
+		*stopReason = sr
 		if !push(&Event{
 			ID:         NewEventID(),
 			Timestamp:  time.Now(),
 			ToolCalls:  currentToolCalls,
-			StopReason: stopReason,
+			StopReason: sr,
 			Usage:      se.Usage.toUsage(),
 
 		}, nil) {
@@ -419,15 +423,16 @@ func (p *anthropicProvider) handleStreamEvent(se streamEvent, currentText *strin
 				Response:   currentText.String(),
 				ToolCalls:  currentToolCalls,
 				Think:      *thinkContent,
-				StopReason: string(stopReason),
+				StopReason: string(sr),
 			})
 		}
 	case "message_stop": // 在 message_delta 后会跟一个message_stop，里面没有实际信息
 		push(&Event{
-			ID:        NewEventID(),
-			Timestamp: time.Now(),
-			Done: true,
-			ToolCalls: currentToolCalls,
+			ID:         NewEventID(),
+			Timestamp:  time.Now(),
+			Done:       true,
+			ToolCalls:  currentToolCalls,
+			StopReason: *stopReason,
 		}, nil)
 		return true, currentToolCalls
 	case "message_start":
