@@ -23,6 +23,8 @@ const (
 	ToolNameCapabilityMatch  = "capability_match"  // API 能力匹配工具
 	ToolNameCapabilityInvoke = "capability_invoke" // API 能力调用工具
 
+	ToolNameToolResultRead = "tool_result_read" // 超限工具结果回读工具
+
 	ToolNameStrataExec = "strata_exec"
 )
 
@@ -35,6 +37,35 @@ var (
 		InputSchema: map[string]any{
 			"type":       "object",
 			"properties": map[string]any{},
+		},
+	}
+
+	// toolResultReadDescriptor 工具结果回读工具描述
+	toolResultReadDescriptor = mcps.ToolDescriptor{
+		Name:        ToolNameToolResultRead,
+		Description: "Read a truncated tool result in full. Use it when a previous tool result was truncated and you need the missing part; page through it with offset and limit.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"handle": map[string]any{
+					"type":        "string",
+					"description": "Handle of the truncated tool result",
+				},
+				"offset": map[string]any{
+					"type":        "integer",
+					"description": "Character offset to start reading from, default 0",
+					"default":     0,
+					"minimum":     0,
+				},
+				"limit": map[string]any{
+					"type":        "integer",
+					"description": "Max characters to read, default 4000, max 8000",
+					"default":     4000,
+					"minimum":     1,
+					"maximum":     8000,
+				},
+			},
+			"required": []string{"handle"},
 		},
 	}
 

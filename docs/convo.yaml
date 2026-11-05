@@ -92,9 +92,26 @@ models:
         type: int
         tags: {bson: 'tokenCount', json: 'tokenCount', pg: ',notnull,type:smallint'}
         isset: true
+      - comment: 轮次编号
+        name: TurnID
+        type: oid.OID
+        tags: {bson: 'turn_id', json: 'turnId', pg: ',notnull,type:bigint'}
+        isset: true
+        query: 'equal'
+      - comment: 归属用户
+        name: OwnerID
+        type: oid.OID
+        tags: {bson: 'owner_id', json: 'ownerId', pg: 'owner_id,notnull,type:bigint'}
+        isset: true
+        query: 'equal'
       - type: comm.MetaField
     oidcat: message
     specNs: convo
+    hooks:
+      beforeCreating: yes
+      afterLoad: yes
+      beforeUpdating: yes
+      beforeDeleting: yes
 
   - name: UsageRecord
     comment: 使用情况 每次请求后记录
@@ -180,6 +197,86 @@ models:
         name: Result
         type: string
         tags: {bson: 'result', json: 'result', pg: ',notnull,type:text'}
+        isset: true
+      - type: comm.MetaField
+    oidcat: event
+    specNs: convo
+
+  - name: ToolRecord
+    comment: '工具调用记录'
+    tableTag: 'convo_tool_record,alias:tr'
+    fields:
+      - type: comm.DefaultModel
+      - comment: 轮次编号
+        name: TurnID
+        type: oid.OID
+        tags: {bson: 'turn_id', json: 'turnId', pg: ',notnull,type:bigint'}
+        isset: true
+        query: 'equal'
+      - comment: 会话编号
+        name: SessionID
+        type: oid.OID
+        tags: {bson: 'session_id', json: 'session', pg: ',notnull,type:bigint'}
+        isset: true
+        query: 'equal'
+      - comment: 归属用户
+        name: OwnerID
+        type: oid.OID
+        tags: {bson: 'owner_id', json: 'ownerId', pg: 'owner_id,notnull,type:bigint'}
+        isset: true
+        query: 'equal'
+      - comment: 轮内顺序
+        name: Seq
+        type: int
+        tags: {bson: 'seq', json: 'seq', pg: ',notnull,type:int'}
+        isset: true
+      - comment: 工具调用编号
+        name: CallID
+        type: string
+        tags: {bson: 'callId', json: 'callId', pg: ',notnull,type:varchar(64)'}
+        isset: true
+        query: 'equal'
+      - comment: 工具名
+        name: ToolName
+        type: string
+        tags: {bson: 'toolName', json: 'toolName', pg: ',notnull,type:varchar(128)'}
+        isset: true
+        query: 'equal'
+      - comment: 入参原文
+        name: Arguments
+        type: string
+        tags: {bson: 'arguments', json: 'arguments', pg: ',notnull,type:text'}
+        isset: true
+      - comment: 结果状态
+        name: Status
+        type: string
+        tags: {bson: 'status', json: 'status', pg: ',notnull,type:varchar(16)'}
+        isset: true
+        query: 'equal'
+      - comment: 结果全文
+        name: Content
+        type: string
+        tags: {bson: 'content', json: 'content', pg: ',notnull,type:text'}
+        isset: true
+      - comment: 发给模型的预览原文
+        name: Preview
+        type: string
+        tags: {bson: 'preview', json: 'preview', pg: ',notnull,type:text'}
+        isset: true
+      - comment: 是否走 handle 外溢
+        name: Spilled
+        type: bool
+        tags: {bson: 'spilled', json: 'spilled', pg: ',notnull'}
+        isset: true
+      - comment: 错误码
+        name: ErrorCode
+        type: string
+        tags: {bson: 'errorCode', json: 'errorCode', pg: ',notnull,type:varchar(64)'}
+        isset: true
+      - comment: 耗时毫秒
+        name: DurationMS
+        type: int
+        tags: {bson: 'durationMs', json: 'durationMs', pg: ',notnull,type:int'}
         isset: true
       - type: comm.MetaField
     oidcat: event
@@ -328,12 +425,13 @@ stores:
     embed: ConvoStoreX
     hods:
       - { name: Session, type: LGUD }
-      - { name: Message, type: LGD }
+      - { name: Message, type: LGCD }
       - { name: User, type: LGCUD, export: G }
       - { name: ThirdUser, type: LGD }
       - { name: Memory, type: LGCUD }
       - { name: UsageRecord, type: LGCD }
       - { name: ChatTurn, type: LGCUD }
+      - { name: ToolRecord, type: LGCUD }
 
 
 webcode: chi

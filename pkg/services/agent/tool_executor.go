@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/liut/morign/pkg/models/convo"
 	"github.com/liut/morign/pkg/models/mcps"
 	"github.com/liut/morign/pkg/services/llm"
 	"github.com/liut/morign/pkg/services/tools"
@@ -16,9 +17,20 @@ import (
 	"github.com/liut/morign/pkg/utils/words"
 )
 
+// ToolResultSpiller 把工具结果全文写入原始记录，返回可回读的 handle。
+// 由存储层实现：轮次、会话与归属一律由服务端从上下文推导。
+type ToolResultSpiller interface {
+	SpillToolResult(ctx context.Context, in convo.ToolRecordSpill) (string, error)
+}
+
 // ToolExecutor 封装工具调用循环逻辑
 type ToolExecutor struct {
 	toolreg *tools.Registry
+
+	// Spiller 把超限的工具结果全文写入原始记录，返回可回读的 handle。
+	// handle 随预览一并给模型，模型可用 tool_result_read 分页回读全文。
+	// 可选，nil 时不外溢。
+	Spiller ToolResultSpiller
 
 	// BeforeToolCall 在每个工具调用前执行。返回 block=true 时阻止工具执行，
 	// reason 作为 error 内容写入 ToolResult。可选，nil 时跳过。
@@ -56,10 +68,16 @@ func (e *ToolExecutor) ExecuteToolCalls(ctx context.Context, messages []llm.Mess
 	var wg sync.WaitGroup
 	wg.Add(n)
 
+	// 同一批次的调用按给定顺序编号：并发执行打乱了完成顺序，序号负责还原配对关系。
+	seqBase := 0
+	if c, ok := ctx.Value(toolSeqKey{}).(*ToolSeqCounter); ok {
+		seqBase = c.Next(n)
+	}
+
 	for i, tc := range toolCalls {
 		go func(idx int, tc llm.ToolCall) {
 			defer wg.Done()
-			results[idx] = e.callTool(ctx, tc)
+			results[idx] = e.callTool(ctx, tc, seqBase+idx)
 		}(i, tc)
 	}
 
@@ -72,7 +90,8 @@ func (e *ToolExecutor) ExecuteToolCalls(ctx context.Context, messages []llm.Mess
 		if ev == nil {
 			// 工具 goroutine 未落结果（如 runtime.Goexit），补一个错误结果维持与 tool_calls 的配对。
 			ev = toolErrorResult(toolCalls[i].ID, toolCalls[i].Function.Name,
-				llm.ToolErrorExecutionFailed, "tool call did not complete")
+				llm.ToolErrorExecutionFailed, "tool call did not complete",
+				string(toolCalls[i].Function.Arguments), seqBase+i, 0)
 		}
 		if !ev.ToolResult.Terminate {
 			allTerminate = false
@@ -88,9 +107,37 @@ func (e *ToolExecutor) ExecuteToolCalls(ctx context.Context, messages []llm.Mess
 	return events, messages, allTerminate
 }
 
-// formatToolResult 将工具结果转换为文本字符串，并按配置上限截断
-func formatToolResult(result map[string]any) string {
-	return truncateToolResult(toolResultText(result))
+// spillToolResult 在结果超限时把全文写入原始记录，并把 handle 追加到预览尾部。
+// 落库失败时降级为纯截断文本：外溢是增强，不该让工具调用失败。
+// 回读工具自身的结果不再外溢，否则读—截断—再读会成环。
+func (e *ToolExecutor) spillToolResult(ctx context.Context, tc llm.ToolCall, seq int, args, full, status, code string, durationMS int) string {
+	preview := truncateToolResult(full)
+	if e.Spiller == nil || preview == full || tc.Function.Name == tools.ToolNameToolResultRead {
+		return preview
+	}
+	handle, err := e.Spiller.SpillToolResult(ctx, convo.ToolRecordSpill{
+		Seq:        seq,
+		CallID:     tc.ID,
+		ToolName:   tc.Function.Name,
+		Arguments:  args,
+		Status:     status,
+		Content:    full,
+		Preview:    preview,
+		Spilled:    true,
+		ErrorCode:  code,
+		DurationMS: durationMS,
+	})
+	if err != nil {
+		slog.Warn("spill tool result fail", "tool", tc.Function.Name, "err", err)
+		return preview
+	}
+	return preview + spillNotice(handle)
+}
+
+// spillNotice 是随预览给模型的回读提示。
+func spillNotice(handle string) string {
+	return fmt.Sprintf("\n[result truncated: call %s with handle=%q to read the rest]",
+		tools.ToolNameToolResultRead, handle)
 }
 
 // toolResultText 优先提取 content 数组中的 text，否则使用 structuredContent，最后序列化为 JSON
@@ -141,26 +188,26 @@ func truncateToolResult(text string) string {
 }
 
 // callTool 执行单次工具调用，任何失败都转成结构化错误结果，保证每个 tool call 恰好一个结果。
-func (e *ToolExecutor) callTool(ctx context.Context, tc llm.ToolCall) (ev *llm.Event) {
+func (e *ToolExecutor) callTool(ctx context.Context, tc llm.ToolCall, seq int) (ev *llm.Event) {
+	args := string(tc.Function.Arguments)
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("tool call panic recovered", "tool", tc.Function.Name, "panic", r)
-			ev = toolErrorResult(tc.ID, tc.Function.Name, llm.ToolErrorPanic, fmt.Sprintf("%v", r))
+			ev = toolErrorResult(tc.ID, tc.Function.Name, llm.ToolErrorPanic, fmt.Sprintf("%v", r), args, seq, 0)
 		}
 	}()
 
 	slog.Info("chat", "toolCallID", tc.ID, "toolCallType", tc.Type, "toolCallName", tc.Function.Name)
 
 	if tc.Type != "function" {
-		return toolErrorResult(tc.ID, tc.Function.Name, llm.ToolErrorUnsupportedType, tc.Type)
+		return toolErrorResult(tc.ID, tc.Function.Name, llm.ToolErrorUnsupportedType, tc.Type, args, seq, 0)
 	}
 
 	var parameters map[string]any
-	args := string(tc.Function.Arguments)
 	if args != "" && args != "{}" {
 		if err := json.Unmarshal(tc.Function.Arguments, &parameters); err != nil {
 			slog.Info("chat", "toolCallID", tc.ID, "args", args, "err", err)
-			return toolErrorResult(tc.ID, tc.Function.Name, llm.ToolErrorInvalidArguments, err.Error())
+			return toolErrorResult(tc.ID, tc.Function.Name, llm.ToolErrorInvalidArguments, err.Error(), args, seq, 0)
 		}
 	}
 	if parameters == nil {
@@ -171,14 +218,16 @@ func (e *ToolExecutor) callTool(ctx context.Context, tc llm.ToolCall) (ev *llm.E
 	if e.BeforeToolCall != nil {
 		block, reason := e.BeforeToolCall(ctx, tc.Function.Name, parameters)
 		if block {
-			return toolErrorResult(tc.ID, tc.Function.Name, llm.ToolErrorRejected, reason)
+			return toolErrorResult(tc.ID, tc.Function.Name, llm.ToolErrorRejected, reason, args, seq, 0)
 		}
 	}
 
+	start := time.Now()
 	content, err := e.toolreg.Invoke(ctx, tc.Function.Name, parameters)
+	durationMS := int(time.Since(start).Milliseconds())
 	if err != nil {
 		slog.Info("invokeTool fail", "toolCallName", tc.Function.Name, "err", err)
-		return toolErrorResult(tc.ID, tc.Function.Name, llm.ToolErrorExecutionFailed, err.Error())
+		return toolErrorResult(tc.ID, tc.Function.Name, llm.ToolErrorExecutionFailed, err.Error(), args, seq, durationMS)
 	}
 
 	slog.Info("invokeTool ok", "toolCallName", tc.Function.Name,
@@ -201,34 +250,41 @@ func (e *ToolExecutor) callTool(ctx context.Context, tc llm.ToolCall) (ev *llm.E
 	if mcps.IsToolError(content) {
 		status, code = llm.ToolStatusError, llm.ToolErrorToolError
 	}
-	return toolResultEvent(tc.ID, tc.Function.Name, formatToolResult(content), terminate, status, code)
+	full := toolResultText(content)
+	return toolResultEvent(tc.ID, tc.Function.Name,
+		e.spillToolResult(ctx, tc, seq, args, full, status, code, durationMS),
+		terminate, status, code, args, seq, durationMS)
 }
 
 // toolResultEvent 构造一个工具结果事件。
-func toolResultEvent(callID, name, content string, terminate bool, status, code string) *llm.Event {
+func toolResultEvent(callID, name, content string, terminate bool, status, code, args string, seq, durationMS int) *llm.Event {
 	return &llm.Event{
 		ID:        llm.NewEventID(),
 		Timestamp: time.Now(),
 		Author:    name,
 		ToolResult: &llm.ToolResult{
-			CallID:    callID,
-			Name:      name,
-			Content:   content,
-			Terminate: terminate,
-			Status:    status,
-			ErrorCode: code,
+			CallID:     callID,
+			Name:       name,
+			Content:    content,
+			Terminate:  terminate,
+			Status:     status,
+			ErrorCode:  code,
+			Arguments:  args,
+			Seq:        seq,
+			DurationMS: durationMS,
 		},
 	}
 }
 
 // toolErrorResult 构造一个失败调用的工具结果事件，错误码决定执行状态。
 // 错误文本同样受 ToolResultMaxChars 约束，避免超长错误撑爆上下文。
-func toolErrorResult(callID, name, code, detail string) *llm.Event {
+func toolErrorResult(callID, name, code, detail, args string, seq, durationMS int) *llm.Event {
 	status := llm.ToolStatusError
 	if code == llm.ToolErrorRejected {
 		status = llm.ToolStatusRejected
 	}
-	return toolResultEvent(callID, name, truncateToolResult(formatToolError(name, code, detail)), false, status, code)
+	return toolResultEvent(callID, name, truncateToolResult(formatToolError(name, code, detail)),
+		false, status, code, args, seq, durationMS)
 }
 
 // formatToolError 生成对模型可见的错误文本，给出可行动的信息而非裸错误串。

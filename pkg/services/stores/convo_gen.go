@@ -15,10 +15,11 @@ type ConvoUser = convo.User
 // type ConvoMessage = convo.Message
 // type ConvoSession = convo.Session
 // type ConvoThirdUser = convo.ThirdUser
+// type ConvoToolRecord = convo.ToolRecord
 // type ConvoUsageRecord = convo.UsageRecord
 
 func init() {
-	RegisterModel((*convo.Session)(nil), (*convo.Message)(nil), (*convo.UsageRecord)(nil), (*convo.ChatTurn)(nil), (*convo.User)(nil), (*convo.ThirdUser)(nil), (*convo.Memory)(nil))
+	RegisterModel((*convo.Session)(nil), (*convo.Message)(nil), (*convo.UsageRecord)(nil), (*convo.ChatTurn)(nil), (*convo.ToolRecord)(nil), (*convo.User)(nil), (*convo.ThirdUser)(nil), (*convo.Memory)(nil))
 }
 
 type ConvoStore interface {
@@ -31,6 +32,7 @@ type ConvoStore interface {
 
 	ListMessage(ctx context.Context, spec *ConvoMessageSpec) (data convo.Messages, total int, err error)
 	GetMessage(ctx context.Context, id string) (obj *convo.Message, err error)
+	CreateMessage(ctx context.Context, in convo.MessageBasic) (obj *convo.Message, err error)
 	DeleteMessage(ctx context.Context, id string) error
 
 	ListUser(ctx context.Context, spec *ConvoUserSpec) (data convo.Users, total int, err error)
@@ -59,6 +61,12 @@ type ConvoStore interface {
 	CreateChatTurn(ctx context.Context, in convo.ChatTurnBasic) (obj *convo.ChatTurn, err error)
 	UpdateChatTurn(ctx context.Context, id string, in convo.ChatTurnSet) error
 	DeleteChatTurn(ctx context.Context, id string) error
+
+	ListToolRecord(ctx context.Context, spec *ConvoToolRecordSpec) (data convo.ToolRecords, total int, err error)
+	GetToolRecord(ctx context.Context, id string) (obj *convo.ToolRecord, err error)
+	CreateToolRecord(ctx context.Context, in convo.ToolRecordBasic) (obj *convo.ToolRecord, err error)
+	UpdateToolRecord(ctx context.Context, id string, in convo.ToolRecordSet) error
+	DeleteToolRecord(ctx context.Context, id string) error
 }
 
 type ConvoSessionSpec struct {
@@ -95,12 +103,18 @@ type ConvoMessageSpec struct {
 	SessionID string `extensions:"x-order=A" form:"session" json:"session"`
 	// 角色
 	Role string `extensions:"x-order=B" form:"role" json:"role"`
+	// 轮次编号
+	TurnID string `extensions:"x-order=C" form:"turnId" json:"turnId"`
+	// 归属用户
+	OwnerID string `extensions:"x-order=D" form:"ownerId" json:"ownerId"`
 }
 
 func (spec *ConvoMessageSpec) Sift(q *ormQuery) *ormQuery {
 	q = spec.ModelSpec.Sift(q)
 	q, _ = siftOID(q, "session_id", spec.SessionID, false)
 	q, _ = siftMatch(q, "role", spec.Role, false)
+	q, _ = siftOID(q, "turn_id", spec.TurnID, false)
+	q, _ = siftOID(q, "owner_id", spec.OwnerID, false)
 
 	return q
 }
@@ -230,6 +244,36 @@ func (spec *ConvoChatTurnSpec) Sift(q *ormQuery) *ormQuery {
 	return q
 }
 
+type ConvoToolRecordSpec struct {
+	PageSpec
+	ModelSpec
+
+	// 轮次编号
+	TurnID string `extensions:"x-order=A" form:"turnId" json:"turnId"`
+	// 会话编号
+	SessionID string `extensions:"x-order=B" form:"session" json:"session"`
+	// 归属用户
+	OwnerID string `extensions:"x-order=C" form:"ownerId" json:"ownerId"`
+	// 工具调用编号
+	CallID string `extensions:"x-order=D" form:"callId" json:"callId"`
+	// 工具名
+	ToolName string `extensions:"x-order=E" form:"toolName" json:"toolName"`
+	// 结果状态
+	Status string `extensions:"x-order=F" form:"status" json:"status"`
+}
+
+func (spec *ConvoToolRecordSpec) Sift(q *ormQuery) *ormQuery {
+	q = spec.ModelSpec.Sift(q)
+	q, _ = siftOID(q, "turn_id", spec.TurnID, false)
+	q, _ = siftOID(q, "session_id", spec.SessionID, false)
+	q, _ = siftOID(q, "owner_id", spec.OwnerID, false)
+	q, _ = siftEqual(q, "call_id", spec.CallID, false)
+	q, _ = siftEqual(q, "tool_name", spec.ToolName, false)
+	q, _ = siftEqual(q, "status", spec.Status, false)
+
+	return q
+}
+
 type convoStore struct {
 	w *Wrap
 }
@@ -266,12 +310,38 @@ func (s *convoStore) ListMessage(ctx context.Context, spec *ConvoMessageSpec) (d
 func (s *convoStore) GetMessage(ctx context.Context, id string) (obj *convo.Message, err error) {
 	obj = new(convo.Message)
 	err = dbGetWithPKID(ctx, s.w.db, obj, id)
-
+	if err == nil {
+		err = s.afterLoadMessage(ctx, obj)
+	}
+	return
+}
+func (s *convoStore) CreateMessage(ctx context.Context, in convo.MessageBasic) (obj *convo.Message, err error) {
+	err = s.w.db.RunInTx(ctx, nil, func(ctx context.Context, tx pgTx) (err error) {
+		obj = convo.NewMessageWithBasic(in)
+		if err = dbBeforeCreateMessage(ctx, tx, obj); err != nil {
+			return
+		}
+		dbMetaUp(ctx, tx, obj)
+		err = dbInsert(ctx, tx, obj)
+		return err
+	})
 	return
 }
 func (s *convoStore) DeleteMessage(ctx context.Context, id string) error {
 	obj := new(convo.Message)
-	return s.w.db.DeleteModel(ctx, obj, id)
+	if err := dbGetWithPKID(ctx, s.w.db, obj, id); err != nil {
+		if errorIs(err, ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	return s.w.db.RunInTx(ctx, nil, func(ctx context.Context, tx pgTx) (err error) {
+		if err = dbBeforeDeleteMessage(ctx, tx, obj); err != nil {
+			return
+		}
+		err = dbDeleteM(ctx, tx, s.w.db.Schema(), s.w.db.SchemaCrap(), obj)
+		return
+	})
 }
 
 func (s *convoStore) ListUser(ctx context.Context, spec *ConvoUserSpec) (data convo.Users, total int, err error) {
@@ -451,6 +521,37 @@ func (s *convoStore) UpdateChatTurn(ctx context.Context, id string, in convo.Cha
 }
 func (s *convoStore) DeleteChatTurn(ctx context.Context, id string) error {
 	obj := new(convo.ChatTurn)
+	return s.w.db.DeleteModel(ctx, obj, id)
+}
+
+func (s *convoStore) ListToolRecord(ctx context.Context, spec *ConvoToolRecordSpec) (data convo.ToolRecords, total int, err error) {
+	total, err = s.w.db.ListModel(ctx, spec, &data)
+	return
+}
+func (s *convoStore) GetToolRecord(ctx context.Context, id string) (obj *convo.ToolRecord, err error) {
+	obj = new(convo.ToolRecord)
+	err = dbGetWithPKID(ctx, s.w.db, obj, id)
+
+	return
+}
+func (s *convoStore) CreateToolRecord(ctx context.Context, in convo.ToolRecordBasic) (obj *convo.ToolRecord, err error) {
+	obj = convo.NewToolRecordWithBasic(in)
+	dbMetaUp(ctx, s.w.db, obj)
+	err = dbInsert(ctx, s.w.db, obj)
+	return
+}
+func (s *convoStore) UpdateToolRecord(ctx context.Context, id string, in convo.ToolRecordSet) error {
+	exist := new(convo.ToolRecord)
+	if err := dbGetWithPKID(ctx, s.w.db, exist, id); err != nil {
+		return err
+	}
+	exist.SetIsUpdate(true)
+	exist.SetWith(in)
+	dbMetaUp(ctx, s.w.db, exist)
+	return dbUpdate(ctx, s.w.db, exist)
+}
+func (s *convoStore) DeleteToolRecord(ctx context.Context, id string) error {
+	obj := new(convo.ToolRecord)
 	return s.w.db.DeleteModel(ctx, obj, id)
 }
 

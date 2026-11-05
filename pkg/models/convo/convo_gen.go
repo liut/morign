@@ -206,6 +206,10 @@ type MessageBasic struct {
 	Content string `binding:"required" bson:"content" bun:",notnull" extensions:"x-order=C" form:"content" json:"content" pg:",notnull"`
 	// TokenCount
 	TokenCount int `bson:"tokenCount" bun:",notnull,type:smallint" extensions:"x-order=D" form:"tokenCount" json:"tokenCount" pg:",notnull,type:smallint"`
+	// 轮次编号
+	TurnID oid.OID `bson:"turn_id" bun:",notnull,type:bigint" extensions:"x-order=E" json:"turnId" pg:",notnull,type:bigint" swaggertype:"string"`
+	// 归属用户
+	OwnerID oid.OID `bson:"owner_id" bun:"owner_id,notnull,type:bigint" extensions:"x-order=F" json:"ownerId" pg:"owner_id,notnull,type:bigint" swaggertype:"string"`
 	// for meta update
 	MetaDiff *comm.MetaDiff `bson:"-" bun:"-" json:"metaUp,omitempty" pg:"-" swaggerignore:"true"`
 } // @name convoMessageBasic
@@ -246,6 +250,10 @@ type MessageSet struct {
 	Content *string `extensions:"x-order=C" json:"content"`
 	// TokenCount
 	TokenCount *int `extensions:"x-order=D" json:"tokenCount"`
+	// 轮次编号
+	TurnID *string `extensions:"x-order=E" json:"turnId"`
+	// 归属用户
+	OwnerID *string `extensions:"x-order=F" json:"ownerId"`
 	// for meta update
 	MetaDiff *comm.MetaDiff `json:"metaUp,omitempty" swaggerignore:"true"`
 } // @name convoMessageSet
@@ -268,6 +276,18 @@ func (z *Message) SetWith(o MessageSet) {
 	if o.TokenCount != nil && z.TokenCount != *o.TokenCount {
 		z.LogChangeValue("token_count", z.TokenCount, o.TokenCount)
 		z.TokenCount = *o.TokenCount
+	}
+	if o.TurnID != nil {
+		if id := oid.Cast(*o.TurnID); z.TurnID != id {
+			z.LogChangeValue("turn_id", z.TurnID, id)
+			z.TurnID = id
+		}
+	}
+	if o.OwnerID != nil {
+		if id := oid.Cast(*o.OwnerID); z.OwnerID != id {
+			z.LogChangeValue("owner_id", z.OwnerID, id)
+			z.OwnerID = id
+		}
 	}
 	if o.MetaDiff != nil && z.MetaUp(o.MetaDiff) {
 		z.SetChange("meta")
@@ -496,6 +516,186 @@ func (in *ChatTurnBasic) MetaAddKVs(args ...any) *ChatTurnBasic {
 	return in
 }
 func (in *ChatTurnSet) MetaAddKVs(args ...any) *ChatTurnSet {
+	in.MetaDiff = comm.MetaDiffAddKVs(in.MetaDiff, args...)
+	return in
+}
+
+// consts of ToolRecord 工具调用记录
+const (
+	ToolRecordTable = "convo_tool_record"
+	ToolRecordAlias = "tr"
+	ToolRecordLabel = "toolRecord"
+	ToolRecordTypID = "convoToolRecord"
+)
+
+// ToolRecord 工具调用记录
+type ToolRecord struct {
+	comm.BaseModel `bun:"table:convo_tool_record,alias:tr" json:"-"`
+
+	comm.DefaultModel
+
+	ToolRecordBasic
+
+	comm.MetaField
+} // @name convoToolRecord
+
+type ToolRecordBasic struct {
+	// 轮次编号
+	TurnID oid.OID `bson:"turn_id" bun:",notnull,type:bigint" extensions:"x-order=A" json:"turnId" pg:",notnull,type:bigint" swaggertype:"string"`
+	// 会话编号
+	SessionID oid.OID `bson:"session_id" bun:",notnull,type:bigint" extensions:"x-order=B" json:"session" pg:",notnull,type:bigint" swaggertype:"string"`
+	// 归属用户
+	OwnerID oid.OID `bson:"owner_id" bun:"owner_id,notnull,type:bigint" extensions:"x-order=C" json:"ownerId" pg:"owner_id,notnull,type:bigint" swaggertype:"string"`
+	// 轮内顺序
+	Seq int `bson:"seq" bun:",notnull,type:int" extensions:"x-order=D" form:"seq" json:"seq" pg:",notnull,type:int"`
+	// 工具调用编号
+	CallID string `bson:"callId" bun:",notnull,type:varchar(64)" extensions:"x-order=E" form:"callId" json:"callId" pg:",notnull,type:varchar(64)"`
+	// 工具名
+	ToolName string `bson:"toolName" bun:",notnull,type:varchar(128)" extensions:"x-order=F" form:"toolName" json:"toolName" pg:",notnull,type:varchar(128)"`
+	// 入参原文
+	Arguments string `bson:"arguments" bun:",notnull,type:text" extensions:"x-order=G" form:"arguments" json:"arguments" pg:",notnull,type:text"`
+	// 结果状态
+	Status string `bson:"status" bun:",notnull,type:varchar(16)" extensions:"x-order=H" form:"status" json:"status" pg:",notnull,type:varchar(16)"`
+	// 结果全文
+	Content string `bson:"content" bun:",notnull,type:text" extensions:"x-order=I" form:"content" json:"content" pg:",notnull,type:text"`
+	// 发给模型的预览原文
+	Preview string `bson:"preview" bun:",notnull,type:text" extensions:"x-order=J" form:"preview" json:"preview" pg:",notnull,type:text"`
+	// 是否走 handle 外溢
+	Spilled bool `bson:"spilled" bun:",notnull" extensions:"x-order=K" form:"spilled" json:"spilled" pg:",notnull"`
+	// 错误码
+	ErrorCode string `bson:"errorCode" bun:",notnull,type:varchar(64)" extensions:"x-order=L" form:"errorCode" json:"errorCode" pg:",notnull,type:varchar(64)"`
+	// 耗时毫秒
+	DurationMS int `bson:"durationMs" bun:",notnull,type:int" extensions:"x-order=M" form:"durationMs" json:"durationMs" pg:",notnull,type:int"`
+	// for meta update
+	MetaDiff *comm.MetaDiff `bson:"-" bun:"-" json:"metaUp,omitempty" pg:"-" swaggerignore:"true"`
+} // @name convoToolRecordBasic
+
+type ToolRecords []ToolRecord
+
+// Creating function call to it's inner fields defined hooks
+func (z *ToolRecord) Creating() error {
+	if z.IsZeroID() {
+		z.SetID(oid.NewID(oid.OtEvent))
+	}
+
+	return z.DefaultModel.Creating()
+}
+func NewToolRecordWithBasic(in ToolRecordBasic) *ToolRecord {
+	obj := &ToolRecord{
+		ToolRecordBasic: in,
+	}
+	_ = obj.MetaUp(in.MetaDiff)
+	return obj
+}
+func NewToolRecordWithID(id any) *ToolRecord {
+	obj := new(ToolRecord)
+	_ = obj.SetID(id)
+	return obj
+}
+func (_ *ToolRecord) IdentityLabel() string { return ToolRecordLabel }
+func (_ *ToolRecord) IdentityModel() string { return ToolRecordTypID }
+func (_ *ToolRecord) IdentityTable() string { return ToolRecordTable }
+func (_ *ToolRecord) IdentityAlias() string { return ToolRecordAlias }
+
+type ToolRecordSet struct {
+	// 轮次编号
+	TurnID *string `extensions:"x-order=A" json:"turnId"`
+	// 会话编号
+	SessionID *string `extensions:"x-order=B" json:"session"`
+	// 归属用户
+	OwnerID *string `extensions:"x-order=C" json:"ownerId"`
+	// 轮内顺序
+	Seq *int `extensions:"x-order=D" json:"seq"`
+	// 工具调用编号
+	CallID *string `extensions:"x-order=E" json:"callId"`
+	// 工具名
+	ToolName *string `extensions:"x-order=F" json:"toolName"`
+	// 入参原文
+	Arguments *string `extensions:"x-order=G" json:"arguments"`
+	// 结果状态
+	Status *string `extensions:"x-order=H" json:"status"`
+	// 结果全文
+	Content *string `extensions:"x-order=I" json:"content"`
+	// 发给模型的预览原文
+	Preview *string `extensions:"x-order=J" json:"preview"`
+	// 是否走 handle 外溢
+	Spilled *bool `extensions:"x-order=K" json:"spilled"`
+	// 错误码
+	ErrorCode *string `extensions:"x-order=L" json:"errorCode"`
+	// 耗时毫秒
+	DurationMS *int `extensions:"x-order=M" json:"durationMs"`
+	// for meta update
+	MetaDiff *comm.MetaDiff `json:"metaUp,omitempty" swaggerignore:"true"`
+} // @name convoToolRecordSet
+
+func (z *ToolRecord) SetWith(o ToolRecordSet) {
+	if o.TurnID != nil {
+		if id := oid.Cast(*o.TurnID); z.TurnID != id {
+			z.LogChangeValue("turn_id", z.TurnID, id)
+			z.TurnID = id
+		}
+	}
+	if o.SessionID != nil {
+		if id := oid.Cast(*o.SessionID); z.SessionID != id {
+			z.LogChangeValue("session_id", z.SessionID, id)
+			z.SessionID = id
+		}
+	}
+	if o.OwnerID != nil {
+		if id := oid.Cast(*o.OwnerID); z.OwnerID != id {
+			z.LogChangeValue("owner_id", z.OwnerID, id)
+			z.OwnerID = id
+		}
+	}
+	if o.Seq != nil && z.Seq != *o.Seq {
+		z.LogChangeValue("seq", z.Seq, o.Seq)
+		z.Seq = *o.Seq
+	}
+	if o.CallID != nil && z.CallID != *o.CallID {
+		z.LogChangeValue("call_id", z.CallID, o.CallID)
+		z.CallID = *o.CallID
+	}
+	if o.ToolName != nil && z.ToolName != *o.ToolName {
+		z.LogChangeValue("tool_name", z.ToolName, o.ToolName)
+		z.ToolName = *o.ToolName
+	}
+	if o.Arguments != nil && z.Arguments != *o.Arguments {
+		z.LogChangeValue("arguments", z.Arguments, o.Arguments)
+		z.Arguments = *o.Arguments
+	}
+	if o.Status != nil && z.Status != *o.Status {
+		z.LogChangeValue("status", z.Status, o.Status)
+		z.Status = *o.Status
+	}
+	if o.Content != nil && z.Content != *o.Content {
+		z.LogChangeValue("content", z.Content, o.Content)
+		z.Content = *o.Content
+	}
+	if o.Preview != nil && z.Preview != *o.Preview {
+		z.LogChangeValue("preview", z.Preview, o.Preview)
+		z.Preview = *o.Preview
+	}
+	if o.Spilled != nil && z.Spilled != *o.Spilled {
+		z.LogChangeValue("spilled", z.Spilled, o.Spilled)
+		z.Spilled = *o.Spilled
+	}
+	if o.ErrorCode != nil && z.ErrorCode != *o.ErrorCode {
+		z.LogChangeValue("error_code", z.ErrorCode, o.ErrorCode)
+		z.ErrorCode = *o.ErrorCode
+	}
+	if o.DurationMS != nil && z.DurationMS != *o.DurationMS {
+		z.LogChangeValue("duration_ms", z.DurationMS, o.DurationMS)
+		z.DurationMS = *o.DurationMS
+	}
+	if o.MetaDiff != nil && z.MetaUp(o.MetaDiff) {
+		z.SetChange("meta")
+	}
+}
+func (in *ToolRecordBasic) MetaAddKVs(args ...any) *ToolRecordBasic {
+	in.MetaDiff = comm.MetaDiffAddKVs(in.MetaDiff, args...)
+	return in
+}
+func (in *ToolRecordSet) MetaAddKVs(args ...any) *ToolRecordSet {
 	in.MetaDiff = comm.MetaDiffAddKVs(in.MetaDiff, args...)
 	return in
 }

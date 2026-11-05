@@ -50,7 +50,7 @@ func InitChannels(r chi.Router, preset *aigc.Preset, sto stores.Storage, llmClie
 		sto:      sto,
 		llm:      llmClient,
 		toolreg:  toolreg,
-		toolExec: newToolExecutor(toolreg),
+		toolExec: newToolExecutor(toolreg, sto.Convo()),
 		rnr:      runner.New(stores.NewSessionStore(sto), stores.NewHistoryStore(sto)),
 	}
 
@@ -191,6 +191,8 @@ func (chh *channelHandler) MessageHandler(p channel.Channel, msg *channel.Messag
 		return
 	}
 	ctx = stores.ContextWithTurnID(ctx, turnID)
+	// 原始记录需要会话锚点：工具结果、消息都按它归属。
+	ctx = stores.ContextWithConvoID(ctx, cs.GetID())
 
 	// Detect streaming support
 	if sr, ok := p.(channel.StreamReplier); ok {
@@ -239,6 +241,10 @@ func (chh *channelHandler) handleStreamingReply(ctx context.Context, p channel.C
 		// Skip tool result events — they are internal to the agent loop
 		if event.ToolResult != nil {
 			tracker.called.Store(true)
+			// 工具轨迹落原始记录。
+			if err := chh.rnr.Persist(ctx, cs.GetID(), event); err != nil {
+				slog.Warn("channel: persist tool record failed", "err", err)
+			}
 			continue
 		}
 
@@ -306,6 +312,12 @@ func (chh *channelHandler) handleRegularReply(ctx context.Context, p channel.Cha
 		LLM:      chh.llm,
 		ToolExec: chh.toolExec,
 		MaxLoop:  settings.Current.MaxLoopIterations,
+		// 非流式没有事件流：工具调用轨迹靠回调送进持久化路径。
+		OnToolResult: func(ctx context.Context, ev *llm.Event) {
+			if err := chh.rnr.Persist(ctx, cs.GetID(), ev); err != nil {
+				slog.Warn("channel: persist tool record failed", "err", err)
+			}
+		},
 	})
 	tracker := newTurnToolTracker()
 	ctx = contextWithTurnTracker(ctx, tracker)

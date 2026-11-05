@@ -143,6 +143,12 @@ func (a *api) postChat(w http.ResponseWriter, r *http.Request) {
 		LLM:      a.llm,
 		ToolExec: a.toolExec,
 		MaxLoop:  settings.Current.MaxLoopIterations,
+		// 非流式没有事件流：工具调用轨迹靠回调送进持久化路径。
+		OnToolResult: func(ctx context.Context, ev *llm.Event) {
+			if err := a.rnr.Persist(context.WithoutCancel(ctx), ccr.cs.GetID(), ev); err != nil {
+				logger().Info("persist tool record fail", "err", err)
+			}
+		},
 	})
 
 	logger().Info("chat", "csid", param.GetConversionID(), "msgs", len(ccr.messages), "prompt", param.Prompt, "ip", r.RemoteAddr)
@@ -164,13 +170,17 @@ func (a *api) postChat(w http.ResponseWriter, r *http.Request) {
 	}
 	ccr.turnID = gate.ID
 
+	// 原始记录需要轮次与会话锚点：工具结果、消息都按它们归属。
+	ctx := stores.ContextWithTurnID(r.Context(), ccr.turnID)
+	ctx = stores.ContextWithConvoID(ctx, ccr.cs.GetID())
+
 	if isStream {
-		a.handleSSEStream(w, r, loop, ccr)
+		a.handleSSEStream(w, r, ctx, loop, ccr)
 		return
 	}
 
 	tracker := newTurnToolTracker()
-	tctx := contextWithTurnTracker(r.Context(), tracker)
+	tctx := contextWithTurnTracker(ctx, tracker)
 	answer, err := loop.RunNonStreaming(tctx, ccr.messages, ccr.tools)
 	finishTurn(r.Context(), a.sto.Convo(), ccr.turnID, answer, tracker.called.Load(), err)
 	if err != nil {
@@ -178,6 +188,17 @@ func (a *api) postChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logger().Info("chat", "answer", answer)
+
+	// 非流式链路同样要留下原始记录，否则这段对话在 PG 里查不到。
+	if answer != "" {
+		if err := a.rnr.Persist(tctx, ccr.cs.GetID(), &llm.Event{
+			Author:     "assistant",
+			Delta:      answer,
+			UserPrompt: ccr.prompt,
+		}); err != nil {
+			logger().Info("persist fail", "err", err)
+		}
+	}
 
 	var cm ChatMessage
 	cm.Text = answer
@@ -212,7 +233,7 @@ func writeEvent(w io.Writer, id string, m any) bool {
 }
 
 // handleSSEStream runs the agent loop and writes events to the SSE response.
-func (a *api) handleSSEStream(w http.ResponseWriter, r *http.Request, loop *agent.AgentLoop, ccr *chatRequest) {
+func (a *api) handleSSEStream(w http.ResponseWriter, r *http.Request, ctx context.Context, loop *agent.AgentLoop, ccr *chatRequest) {
 	if _, ok := w.(http.Flusher); !ok {
 		http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
 		return
@@ -224,7 +245,7 @@ func (a *api) handleSSEStream(w http.ResponseWriter, r *http.Request, loop *agen
 	w.Header().Add("Conversation-ID", ccr.cs.GetID())
 	w.(http.Flusher).Flush()
 
-	cctx := stores.ContextWithConvoID(r.Context(), ccr.cs.GetID())
+	cctx := ctx
 	tracker := newTurnToolTracker()
 	cctx = contextWithTurnTracker(cctx, tracker)
 
@@ -247,6 +268,10 @@ func (a *api) handleSSEStream(w http.ResponseWriter, r *http.Request, loop *agen
 
 		if event.ToolResult != nil {
 			tracker.called.Store(true)
+			// 工具轨迹落原始记录：客户端断开也不该丢。
+			if err := a.rnr.Persist(context.WithoutCancel(cctx), ccr.cs.GetID(), event); err != nil {
+				logger().Info("persist tool record fail", "err", err)
+			}
 			continue
 		}
 
@@ -311,7 +336,8 @@ func (a *api) handleSSEStream(w http.ResponseWriter, r *http.Request, loop *agen
 	finishTurn(r.Context(), a.sto.Convo(), ccr.turnID, answer, tracker.called.Load(), runErr)
 
 	if len(answer) > 0 {
-		if err := a.rnr.Persist(r.Context(), ccr.cs.GetID(), &llm.Event{
+		// 原始记录与请求解绑：客户端断开也不该丢掉这段对话。
+		if err := a.rnr.Persist(context.WithoutCancel(ctx), ccr.cs.GetID(), &llm.Event{
 			Author:     "assistant",
 			Delta:      answer,
 			Think:      think,

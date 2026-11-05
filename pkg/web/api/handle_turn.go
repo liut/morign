@@ -162,24 +162,28 @@ func joinParts(parts ...string) string {
 // turnToolKey 工具调用追踪器在上下文中的键。
 type turnToolKey struct{}
 
-// turnToolTracker 记录本次请求是否已发生工具调用。
+// turnToolTracker 记录本次请求是否已发生工具调用，并分配轮内工具调用序号。
 type turnToolTracker struct {
 	called atomic.Bool
+	seq    *agent.ToolSeqCounter
 }
 
 func newTurnToolTracker() *turnToolTracker {
-	return &turnToolTracker{}
+	return &turnToolTracker{seq: agent.NewToolSeqCounter()}
 }
 
-// contextWithTurnTracker 把工具调用追踪器挂到上下文上。
+// contextWithTurnTracker 把工具调用追踪器与轮内序号计数器挂到上下文上。
 func contextWithTurnTracker(ctx context.Context, tr *turnToolTracker) context.Context {
-	return context.WithValue(ctx, turnToolKey{}, tr)
+	ctx = context.WithValue(ctx, turnToolKey{}, tr)
+	return agent.ContextWithToolSeqCounter(ctx, tr.seq)
 }
 
 // newToolExecutor 构造带工具调用追踪的执行器。
 // 追踪器随上下文传递，用来区分「取消前已发生副作用」与「取消前无副作用」。
-func newToolExecutor(reg *tools.Registry) *agent.ToolExecutor {
+// spiller 把超限的工具结果全文落库，回读用的 handle 由此产生。
+func newToolExecutor(reg *tools.Registry, spiller agent.ToolResultSpiller) *agent.ToolExecutor {
 	te := agent.NewToolExecutor(reg)
+	te.Spiller = spiller
 	te.BeforeToolCall = func(ctx context.Context, name string, params map[string]any) (bool, string) {
 		if tr, ok := ctx.Value(turnToolKey{}).(*turnToolTracker); ok {
 			tr.called.Store(true)

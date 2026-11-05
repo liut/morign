@@ -348,6 +348,11 @@ func setToolResultMaxChars(t *testing.T, n int) {
 	t.Cleanup(func() { settings.Current.ToolResultMaxChars = orig })
 }
 
+// formatToolResult 将工具结果转换为文本字符串，并按配置上限截断
+func formatToolResult(result map[string]any) string {
+	return truncateToolResult(toolResultText(result))
+}
+
 func textToolResult(text string) map[string]any {
 	return map[string]any{"content": []any{map[string]any{"text": text}}}
 }

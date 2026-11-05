@@ -24,6 +24,10 @@ type AgentLoopConfig struct {
 	LLM      llm.Client    // LLM client for Chat and StreamChat
 	ToolExec *ToolExecutor // tool executor (same package)
 	MaxLoop  int           // safety net: max loop iterations, default 5
+
+	// OnToolResult 在非流式执行工具后回调，产出工具结果事件。
+	// 非流式链路没有事件流，持久化路径靠它拿到工具调用轨迹。可选，nil 时丢弃。
+	OnToolResult func(ctx context.Context, event *llm.Event)
 }
 
 // AgentLoop encapsulates the full agent loop: LLM call + tool execution + iteration.
@@ -119,10 +123,15 @@ func (al *AgentLoop) RunNonStreaming(ctx context.Context, messages []llm.Message
 		}
 
 		// Execute tool calls
-		_, updatedMsgs, allTerminate := al.cfg.ToolExec.ExecuteToolCalls(
+		events, updatedMsgs, allTerminate := al.cfg.ToolExec.ExecuteToolCalls(
 			ctx, messages, result.ToolCalls, result.Thinking,
 		)
 		messages = updatedMsgs
+		if al.cfg.OnToolResult != nil {
+			for _, ev := range events {
+				al.cfg.OnToolResult(ctx, ev)
+			}
+		}
 
 		if allTerminate {
 			return result.Content, nil

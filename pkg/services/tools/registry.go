@@ -161,6 +161,9 @@ func (r *Registry) initTools(sto stores.Storage) {
 		r.registerTool(&r.tools, memoryStoreDescriptor, sto.Convo().InvokerForMemoryStore(), SourceBuiltinPublic)
 		r.registerTool(&r.tools, memoryForgetDescriptor, sto.Convo().InvokerForMemoryForget(), SourceBuiltinPublic)
 
+		// 超限工具结果回读：与 Fetch 同级的公开内置工具，读取范围限本会话本用户
+		r.registerTool(&r.tools, toolResultReadDescriptor, sto.Convo().InvokerForToolResultRead(), SourceBuiltinPublic)
+
 		// 技能工具
 		r.skills = sto.Skill()
 		r.registerTool(&r.tools, skillListDescriptor, r.callSkillList, SourceBuiltinPublic)
@@ -435,7 +438,8 @@ func (r *Registry) RemoveChannelTools(channel string) {
 func (r *Registry) checkServerNameConflict(name string) error {
 	switch name {
 	case ToolNameKBSearch, ToolNameKBCreate, ToolNameFetch,
-		ToolNameMemoryList, ToolNameMemoryRecall, ToolNameMemoryStore, ToolNameMemoryForget:
+		ToolNameMemoryList, ToolNameMemoryRecall, ToolNameMemoryStore, ToolNameMemoryForget,
+		ToolNameToolResultRead:
 		return fmt.Errorf("server name %q conflicts with built-in tool", name)
 	}
 
@@ -453,7 +457,8 @@ func (r *Registry) checkServerNameConflict(name string) error {
 func (r *Registry) checkToolNameConflict(name string) error {
 	switch name {
 	case ToolNameKBSearch, ToolNameKBCreate, ToolNameFetch,
-		ToolNameMemoryList, ToolNameMemoryRecall, ToolNameMemoryStore, ToolNameMemoryForget:
+		ToolNameMemoryList, ToolNameMemoryRecall, ToolNameMemoryStore, ToolNameMemoryForget,
+		ToolNameToolResultRead:
 		return fmt.Errorf("tool name %q conflicts with built-in tool", name)
 	}
 

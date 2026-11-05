@@ -36,6 +36,11 @@ type ConvoStoreX interface {
 	GetTurnByIdempotencyKey(ctx context.Context, key string) (*convo.ChatTurn, error)
 	UpdateTurnStatus(ctx context.Context, id, status, result string) error
 	ReclaimInterruptedTurns(ctx context.Context) (int, error)
+
+	SpillToolResult(ctx context.Context, in convo.ToolRecordSpill) (string, error)
+	UpsertToolRecord(ctx context.Context, in convo.ToolRecordSpill) error
+	ReadToolRecord(ctx context.Context, id string, offset, limit int) (string, int, error)
+	InvokerForToolResultRead() mcps.Invoker
 }
 
 const defaultMemoryLimit = 5
@@ -756,4 +761,51 @@ func (s *convoStore) ReclaimInterruptedTurns(ctx context.Context) (int, error) {
 func isDuplicateKey(err error) bool {
 	var pgErr PGError
 	return errors.As(err, &pgErr) && pgErr.Field('C') == "23505"
+}
+
+// dbBeforeUpdateMessage 拒绝非本人且非 keeper 的修订。
+func dbBeforeUpdateMessage(ctx context.Context, db ormDB, obj *convo.Message) error {
+	if !ownerAllowed(ctx, obj.OwnerID) {
+		return ErrForbidden
+	}
+	return nil
+}
+
+// dbBeforeDeleteMessage 拒绝非本人且非 keeper 的删除。
+func dbBeforeDeleteMessage(ctx context.Context, db ormDB, obj *convo.Message) error {
+	if !ownerAllowed(ctx, obj.OwnerID) {
+		return ErrForbidden
+	}
+	return nil
+}
+
+// dbBeforeCreateMessage 由登录身份决定归属，请求体指定的归属不生效。
+func dbBeforeCreateMessage(ctx context.Context, db ormDB, obj *convo.Message) error {
+	if id, ok := ownerIDFromContext(ctx); ok {
+		obj.OwnerID = id
+	}
+	return nil
+}
+
+// afterLoadMessage 拒绝非本人且非 keeper 的详情访问。
+func (s *convoStore) afterLoadMessage(ctx context.Context, obj *convo.Message) error {
+	if !ownerAllowed(ctx, obj.OwnerID) {
+		return ErrForbidden
+	}
+	return nil
+}
+
+// SiftX 按请求者身份收窄消息列表：普通用户只看本人，keeper 可按入参过滤。
+func (spec *ConvoMessageSpec) SiftX(ctx context.Context, q *ormQuery) *ormQuery {
+	if restrictedToOwner(ctx) {
+		id, ok := ownerIDFromContext(ctx)
+		if !ok {
+			return q.Where("FALSE")
+		}
+		spec.OwnerID = id.String()
+	}
+	if len(spec.Sort) == 0 {
+		spec.Sort = "created DESC"
+	}
+	return q
 }

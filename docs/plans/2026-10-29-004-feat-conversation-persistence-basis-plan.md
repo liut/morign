@@ -331,6 +331,14 @@ r.invokers[ToolNameToolResultRead] = r.callToolResultRead
 - **增量 A（U1–U3）**：契约 + 写入路径 + handle 机制。全部是增量改动，不触碰线上请求路径，上线即交付"工具调用轨迹可查"与"超限结果可回读"两项能力。
 - **增量 B（U4–U6）**：上下文投影与真实 token 预算。替换的是每一条会话都依赖的上下文构造路径，风险最高，在增量 A 进入生产并稳定后再做。Redis 拼接路径保留为开关可回退，直到投影稳定。
 
+#### 交付进度
+
+- **增量 A（U1–U3）：已交付**（分支 `feat/conversation-persistence-basis`）
+  - U1：`Message` 补 `TurnID` / `OwnerID` 并挂上归属钩子，store 类型码 `LGD → LGCD`；新增 `ToolRecord` 模型（`LGCUD`）；迁移 SQL 只写增量 DDL，`convo_tool_record` 的建表交给 `InitSchemas`
+  - U2：`historyAdapter.AppendEvent` 扩展为原始记录写入路径（用户消息、助手消息、工具记录）；三条入口（Web SSE、Web 非流式、频道）统一注入轮次与会话锚点并转发工具事件；非流式链路经 `AgentLoopConfig.OnToolResult` 回调补齐工具轨迹
+  - U3：截断处（`spillToolResult`）是 `ToolRecord` 的唯一写入方，回读 handle 即该行编号；新增内置工具 `tool_result_read(handle, offset, limit)`，读取强制同会话同归属
+- **增量 B（U4–U6）：未开始**——上下文投影与真实 token 预算待增量 A 进入生产并稳定后再做
+
 ### U1. 契约与表结构
 
 1. `docs/convo.yaml`：`Message` 补 `TurnID` 与 `OwnerID` 字段、store 类型码改 `LGCD`；新增 `ToolRecord` 模型与 store 声明

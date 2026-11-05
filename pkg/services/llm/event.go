@@ -46,12 +46,15 @@ type Event struct {
 
 // ToolResult 携带单次工具调用的执行结果。
 type ToolResult struct {
-	CallID    string
-	Name      string
-	Content   string
-	Terminate bool // 工具请求终止 agent 循环
-	Status    string // ToolStatusOK / ToolStatusError / ToolStatusRejected
-	ErrorCode string // 仅 Status != ToolStatusOK 时有值，取值见 ToolError* 常量
+	CallID     string
+	Name       string
+	Content    string
+	Terminate  bool   // 工具请求终止 agent 循环
+	Status     string // ToolStatusOK / ToolStatusError / ToolStatusRejected
+	ErrorCode  string // 仅 Status != ToolStatusOK 时有值，取值见 ToolError* 常量
+	Arguments  string // 入参原文
+	Seq        int    // 轮内序号，还原调用与结果的配对顺序
+	DurationMS int    // 执行耗时毫秒
 }
 
 // ToolStatus 表示工具调用的执行状态。
