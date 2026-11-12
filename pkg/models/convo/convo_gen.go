@@ -50,6 +50,62 @@ func (z SessionStatus) MarshalText() ([]byte, error) {
 	return []byte(z.String()), nil
 }
 
+// 轮次状态
+type TurnStatus int8
+
+const (
+	TurnStatusQueued      TurnStatus = 1 + iota //  1 排队中
+	TurnStatusRunning                           //  2 执行中
+	TurnStatusSucceeded                         //  3 已完成
+	TurnStatusFailed                            //  4 已失败
+	TurnStatusCancelled                         //  5 已取消
+	TurnStatusInterrupted                       //  6 已中断
+)
+
+func (z *TurnStatus) Decode(s string) error {
+	switch s {
+	case "1", "queued", "Queued":
+		*z = TurnStatusQueued
+	case "2", "running", "Running":
+		*z = TurnStatusRunning
+	case "3", "succeeded", "Succeeded":
+		*z = TurnStatusSucceeded
+	case "4", "failed", "Failed":
+		*z = TurnStatusFailed
+	case "5", "cancelled", "Cancelled":
+		*z = TurnStatusCancelled
+	case "6", "interrupted", "Interrupted":
+		*z = TurnStatusInterrupted
+	default:
+		return fmt.Errorf("invalid turnStatus: %q", s)
+	}
+	return nil
+}
+func (z *TurnStatus) UnmarshalText(b []byte) error {
+	return z.Decode(string(b))
+}
+func (z TurnStatus) String() string {
+	switch z {
+	case TurnStatusQueued:
+		return "queued"
+	case TurnStatusRunning:
+		return "running"
+	case TurnStatusSucceeded:
+		return "succeeded"
+	case TurnStatusFailed:
+		return "failed"
+	case TurnStatusCancelled:
+		return "cancelled"
+	case TurnStatusInterrupted:
+		return "interrupted"
+	default:
+		return fmt.Sprintf("turnStatus %d", int8(z))
+	}
+}
+func (z TurnStatus) MarshalText() ([]byte, error) {
+	return []byte(z.String()), nil
+}
+
 // consts of Session 会话
 const (
 	SessionTable = "convo_session"
@@ -416,8 +472,14 @@ type ChatTurnBasic struct {
 	IdempotencyKey string `bson:"idempotencyKey" bun:",notnull,type:varchar(255),unique:uk_turn_idem_key" extensions:"x-order=B" form:"idempotencyKey" json:"idempotencyKey" pg:",notnull,type:varchar(255),unique:uk_turn_idem_key"`
 	// 来源 web/channel
 	Source string `bson:"source" bun:",notnull,type:varchar(32)" extensions:"x-order=C" form:"source" json:"source" pg:",notnull,type:varchar(32)"`
-	// 状态 queued/running/succeeded/failed/cancelled/interrupted
-	Status string `bson:"status" bun:",notnull,type:varchar(16)" extensions:"x-order=D" form:"status" json:"status" pg:",notnull,type:varchar(16)"`
+	// 状态
+	//  * `queued` - 排队中
+	//  * `running` - 执行中
+	//  * `succeeded` - 已完成
+	//  * `failed` - 已失败
+	//  * `cancelled` - 已取消
+	//  * `interrupted` - 已中断
+	Status TurnStatus `bson:"status" bun:",notnull,type:smallint" enums:"queued,running,succeeded,failed,cancelled,interrupted" extensions:"x-order=D" form:"status" json:"status" pg:",notnull,type:smallint" swaggertype:"string"`
 	// 请求摘要
 	RequestDigest string `bson:"requestDigest" bun:",notnull,type:varchar(64)" extensions:"x-order=E" form:"requestDigest" json:"requestDigest" pg:",notnull,type:varchar(64)"`
 	// 归属用户
@@ -462,8 +524,14 @@ type ChatTurnSet struct {
 	IdempotencyKey *string `extensions:"x-order=B" json:"idempotencyKey"`
 	// 来源 web/channel
 	Source *string `extensions:"x-order=C" json:"source"`
-	// 状态 queued/running/succeeded/failed/cancelled/interrupted
-	Status *string `extensions:"x-order=D" json:"status"`
+	// 状态
+	//  * `queued` - 排队中
+	//  * `running` - 执行中
+	//  * `succeeded` - 已完成
+	//  * `failed` - 已失败
+	//  * `cancelled` - 已取消
+	//  * `interrupted` - 已中断
+	Status *TurnStatus `enums:"queued,running,succeeded,failed,cancelled,interrupted" extensions:"x-order=D" json:"status" swaggertype:"string"`
 	// 请求摘要
 	RequestDigest *string `extensions:"x-order=E" json:"requestDigest"`
 	// 归属用户

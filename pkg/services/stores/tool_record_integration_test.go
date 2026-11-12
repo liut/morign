@@ -19,7 +19,7 @@ func testTurnFor(t *testing.T, ctx context.Context, suffix string) *convo.ChatTu
 	turn, err := Sgt().Convo().CreateTurn(ctx, convo.ChatTurnBasic{
 		IdempotencyKey: fmt.Sprintf("test-tool-record-%s-%d", suffix, os.Getpid()),
 		Source:         "test",
-		Status:         TurnStatusQueued,
+		Status:         convo.TurnStatusQueued,
 		RequestDigest:  "digest",
 	})
 	if err != nil {

@@ -34,7 +34,7 @@ type ConvoStoreX interface {
 
 	CreateTurn(ctx context.Context, in convo.ChatTurnBasic) (*convo.ChatTurn, error)
 	GetTurnByIdempotencyKey(ctx context.Context, key string) (*convo.ChatTurn, error)
-	UpdateTurnStatus(ctx context.Context, id, status, result string) error
+	UpdateTurnStatus(ctx context.Context, id string, status convo.TurnStatus, result string) error
 	ReclaimInterruptedTurns(ctx context.Context) (int, error)
 
 	SpillToolResult(ctx context.Context, in convo.ToolRecordSpill) (string, error)
@@ -94,6 +94,10 @@ func (s *convoStore) SaveSession(ctx context.Context, obj *convo.Session) error 
 		}
 	}
 	dbMetaUp(ctx, s.w.db, obj)
+	// 归属由登录身份决定：删除会话按归属校验，插入时必须落上归属。
+	if id, ok := ownerIDFromContext(ctx); ok {
+		obj.OwnerID = id
+	}
 	return dbInsert(ctx, s.w.db, obj)
 }
 
@@ -685,16 +689,6 @@ func (s *convoStore) afterLoadMemory(ctx context.Context, obj *convo.Memory) err
 	return nil
 }
 
-// 聊天轮次的状态机。轮次是幂等判定的载体：同一幂等键的重复请求只有一个能进入执行。
-const (
-	TurnStatusQueued      = "queued"
-	TurnStatusRunning     = "running"
-	TurnStatusSucceeded   = "succeeded"
-	TurnStatusFailed      = "failed"
-	TurnStatusCancelled   = "cancelled"
-	TurnStatusInterrupted = "interrupted"
-)
-
 // turnIDKey 轮次编号在上下文中的键。
 type turnIDKey struct{}
 
@@ -739,7 +733,7 @@ func (s *convoStore) GetTurnByIdempotencyKey(ctx context.Context, key string) (*
 }
 
 // UpdateTurnStatus 更新轮次状态与最终结果。
-func (s *convoStore) UpdateTurnStatus(ctx context.Context, id, status, result string) error {
+func (s *convoStore) UpdateTurnStatus(ctx context.Context, id string, status convo.TurnStatus, result string) error {
 	return s.UpdateChatTurn(ctx, id, convo.ChatTurnSet{Status: &status, Result: &result})
 }
 
@@ -747,8 +741,8 @@ func (s *convoStore) UpdateTurnStatus(ctx context.Context, id, status, result st
 // 中断轮次不自动重放：已发生的外部副作用不追溯、不重复执行。
 func (s *convoStore) ReclaimInterruptedTurns(ctx context.Context) (int, error) {
 	res, err := s.w.db.NewUpdate().Model((*convo.ChatTurn)(nil)).
-		Set("status = ?", TurnStatusInterrupted).
-		Where("status = ? OR status = ?", TurnStatusQueued, TurnStatusRunning).
+		Set("status = ?", int64(convo.TurnStatusInterrupted)).
+		Where("status = ? OR status = ?", int64(convo.TurnStatusQueued), int64(convo.TurnStatusRunning)).
 		Exec(ctx)
 	if err != nil {
 		return 0, err
@@ -761,6 +755,20 @@ func (s *convoStore) ReclaimInterruptedTurns(ctx context.Context) (int, error) {
 func isDuplicateKey(err error) bool {
 	var pgErr PGError
 	return errors.As(err, &pgErr) && pgErr.Field('C') == "23505"
+}
+
+// dbBeforeDeleteSession 拒绝非本人且非 keeper 的删除，放行后清理会话的附属记录。
+// 子表随会话一并消失：走硬删而非 op_affect_delete —— 移动删除会把答案原文留在 trash schema 里。
+func dbBeforeDeleteSession(ctx context.Context, db ormDB, obj *convo.Session) error {
+	if !ownerAllowed(ctx, obj.OwnerID) {
+		return ErrForbidden
+	}
+	for _, m := range []any{(*convo.Message)(nil), (*convo.ToolRecord)(nil), (*convo.ChatTurn)(nil)} {
+		if _, err := db.NewDelete().Model(m).Where("session_id = ?", int64(obj.ID)).Exec(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // dbBeforeUpdateMessage 拒绝非本人且非 keeper 的修订。

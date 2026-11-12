@@ -412,7 +412,7 @@ func (chh *channelHandler) acquireChannelTurn(ctx context.Context, p channel.Cha
 		SessionID:      cs.GetOID(),
 		IdempotencyKey: turnKeyForChannel(p.Name(), msg.MessageID),
 		Source:         "channel",
-		Status:         stores.TurnStatusQueued,
+		Status:         convo.TurnStatusQueued,
 		RequestDigest:  turnDigest(msg.Content),
 		OwnerID:        owner,
 	}

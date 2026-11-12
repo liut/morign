@@ -15,7 +15,7 @@ import (
 // turnUpdate 记录一次轮次状态更新。
 type turnUpdate struct {
 	id     string
-	status string
+	status convo.TurnStatus
 	result string
 }
 
@@ -56,7 +56,7 @@ func (f *fakeTurnStore) GetTurnByIdempotencyKey(_ context.Context, key string) (
 	return turn, nil
 }
 
-func (f *fakeTurnStore) UpdateTurnStatus(_ context.Context, id, status, result string) error {
+func (f *fakeTurnStore) UpdateTurnStatus(_ context.Context, id string, status convo.TurnStatus, result string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.updates = append(f.updates, turnUpdate{id: id, status: status, result: result})
@@ -91,7 +91,7 @@ func testTurnBasic(key string) convo.ChatTurnBasic {
 	return convo.ChatTurnBasic{
 		IdempotencyKey: key,
 		Source:         "channel",
-		Status:         stores.TurnStatusQueued,
+		Status:         convo.TurnStatusQueued,
 		RequestDigest:  "digest",
 	}
 }
@@ -111,7 +111,7 @@ func TestAcquireTurnFirstRequestProceeds(t *testing.T) {
 		t.Error("gate.ID is empty")
 	}
 	upd, ok := sto.lastUpdate()
-	if !ok || upd.status != stores.TurnStatusRunning {
+	if !ok || upd.status != convo.TurnStatusRunning {
 		t.Errorf("status update = %+v, want running", upd)
 	}
 }
@@ -124,7 +124,7 @@ func TestAcquireTurnDuplicateSucceededReplays(t *testing.T) {
 	seeded := sto.seed(convo.ChatTurnBasic{
 		IdempotencyKey: in.IdempotencyKey,
 		Source:         in.Source,
-		Status:         stores.TurnStatusSucceeded,
+		Status:         convo.TurnStatusSucceeded,
 		RequestDigest:  in.RequestDigest,
 		OwnerID:        owner,
 		Result:         "已完成的答案",
@@ -155,7 +155,7 @@ func TestAcquireTurnDuplicateRunningSkips(t *testing.T) {
 	in.OwnerID = owner
 	sto.seed(convo.ChatTurnBasic{
 		IdempotencyKey: in.IdempotencyKey,
-		Status:         stores.TurnStatusRunning,
+		Status:         convo.TurnStatusRunning,
 		RequestDigest:  in.RequestDigest,
 		OwnerID:        owner,
 	})
@@ -176,7 +176,7 @@ func TestAcquireTurnDuplicateInterruptedSkips(t *testing.T) {
 	in.OwnerID = owner
 	sto.seed(convo.ChatTurnBasic{
 		IdempotencyKey: in.IdempotencyKey,
-		Status:         stores.TurnStatusInterrupted,
+		Status:         convo.TurnStatusInterrupted,
 		RequestDigest:  in.RequestDigest,
 		OwnerID:        owner,
 	})
@@ -197,7 +197,7 @@ func TestAcquireTurnDuplicateFailedReruns(t *testing.T) {
 	in.OwnerID = owner
 	seeded := sto.seed(convo.ChatTurnBasic{
 		IdempotencyKey: in.IdempotencyKey,
-		Status:         stores.TurnStatusFailed,
+		Status:         convo.TurnStatusFailed,
 		RequestDigest:  in.RequestDigest,
 		OwnerID:        owner,
 	})
@@ -213,7 +213,7 @@ func TestAcquireTurnDuplicateFailedReruns(t *testing.T) {
 		t.Errorf("gate.ID = %q, want %q", gate.ID, seeded)
 	}
 	upd, ok := sto.lastUpdate()
-	if !ok || upd.status != stores.TurnStatusRunning {
+	if !ok || upd.status != convo.TurnStatusRunning {
 		t.Errorf("status update = %+v, want running", upd)
 	}
 }
@@ -225,7 +225,7 @@ func TestAcquireTurnDigestConflictRejected(t *testing.T) {
 	in.OwnerID = owner
 	sto.seed(convo.ChatTurnBasic{
 		IdempotencyKey: in.IdempotencyKey,
-		Status:         stores.TurnStatusSucceeded,
+		Status:         convo.TurnStatusSucceeded,
 		RequestDigest:  "另一个请求的摘要",
 		OwnerID:        owner,
 		Result:         "旧答案",
@@ -244,7 +244,7 @@ func TestAcquireTurnOtherOwnerGetsNoResult(t *testing.T) {
 	in := testTurnBasic("wecom:m1")
 	sto.seed(convo.ChatTurnBasic{
 		IdempotencyKey: in.IdempotencyKey,
-		Status:         stores.TurnStatusSucceeded,
+		Status:         convo.TurnStatusSucceeded,
 		RequestDigest:  in.RequestDigest,
 		OwnerID:        other,
 		Result:         "别人的答案",
@@ -262,6 +262,28 @@ func TestAcquireTurnOtherOwnerGetsNoResult(t *testing.T) {
 	}
 }
 
+func TestAcquireTurnUnknownStatusErrors(t *testing.T) {
+	sto := newFakeTurnStore()
+	owner := oid.NewID(oid.OtEvent)
+	in := testTurnBasic("wecom:m1")
+	in.OwnerID = owner
+	sto.seed(convo.ChatTurnBasic{
+		IdempotencyKey: in.IdempotencyKey,
+		Status:         convo.TurnStatus(99),
+		RequestDigest:  in.RequestDigest,
+		OwnerID:        owner,
+	})
+
+	// 未知状态必须报错：静默占住幂等键会让用户永远拿不到答案。
+	gate, err := acquireTurn(context.Background(), sto, in, owner)
+	if err == nil {
+		t.Fatalf("acquireTurn() error = nil, want unknown status error (gate = %+v)", gate)
+	}
+	if gate != nil {
+		t.Errorf("gate = %+v, want nil", gate)
+	}
+}
+
 func TestFinishTurnStatuses(t *testing.T) {
 	owner := oid.NewID(oid.OtEvent)
 	runErr := errors.New("boom")
@@ -275,12 +297,12 @@ func TestFinishTurnStatuses(t *testing.T) {
 		answer  string
 		toolRan bool
 		runErr  error
-		want    string
+		want    convo.TurnStatus
 	}{
-		{name: "成功", ctx: context.Background(), answer: "答案", want: stores.TurnStatusSucceeded},
-		{name: "失败", ctx: context.Background(), runErr: runErr, want: stores.TurnStatusFailed},
-		{name: "取消且无工具", ctx: cancelled, runErr: runErr, want: stores.TurnStatusCancelled},
-		{name: "取消且已有工具", ctx: cancelled, runErr: runErr, toolRan: true, want: stores.TurnStatusInterrupted},
+		{name: "成功", ctx: context.Background(), answer: "答案", want: convo.TurnStatusSucceeded},
+		{name: "失败", ctx: context.Background(), runErr: runErr, want: convo.TurnStatusFailed},
+		{name: "取消且无工具", ctx: cancelled, runErr: runErr, want: convo.TurnStatusCancelled},
+		{name: "取消且已有工具", ctx: cancelled, runErr: runErr, toolRan: true, want: convo.TurnStatusInterrupted},
 	}
 
 	for _, tt := range cases {
@@ -297,7 +319,7 @@ func TestFinishTurnStatuses(t *testing.T) {
 				t.Fatal("no status update recorded")
 			}
 			if upd.status != tt.want {
-				t.Errorf("status = %q, want %q", upd.status, tt.want)
+				t.Errorf("status = %v, want %v", upd.status, tt.want)
 			}
 		})
 	}

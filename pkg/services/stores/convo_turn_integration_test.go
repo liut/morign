@@ -24,7 +24,7 @@ func TestIntegration_ChatTurnLifecycle(t *testing.T) {
 	turn, err := sto.Convo().CreateTurn(ctx, convo.ChatTurnBasic{
 		IdempotencyKey: key,
 		Source:         "test",
-		Status:         TurnStatusQueued,
+		Status:         convo.TurnStatusQueued,
 		RequestDigest:  "digest",
 	})
 	if err != nil {
@@ -39,15 +39,15 @@ func TestIntegration_ChatTurnLifecycle(t *testing.T) {
 		t.Errorf("found turn = %q, want %q", found.StringID(), turn.StringID())
 	}
 
-	if err := sto.Convo().UpdateTurnStatus(ctx, turn.StringID(), TurnStatusRunning, ""); err != nil {
+	if err := sto.Convo().UpdateTurnStatus(ctx, turn.StringID(), convo.TurnStatusRunning, ""); err != nil {
 		t.Fatalf("UpdateTurnStatus() error = %v", err)
 	}
 	found, err = sto.Convo().GetTurnByIdempotencyKey(ctx, key)
 	if err != nil {
 		t.Fatalf("GetTurnByIdempotencyKey() error = %v", err)
 	}
-	if found.Status != TurnStatusRunning {
-		t.Errorf("status = %q, want %q", found.Status, TurnStatusRunning)
+	if found.Status != convo.TurnStatusRunning {
+		t.Errorf("status = %v, want %v", found.Status, convo.TurnStatusRunning)
 	}
 }
 
@@ -59,7 +59,7 @@ func TestIntegration_ChatTurnDuplicateKey(t *testing.T) {
 	if _, err := sto.Convo().CreateTurn(ctx, convo.ChatTurnBasic{
 		IdempotencyKey: key,
 		Source:         "test",
-		Status:         TurnStatusQueued,
+		Status:         convo.TurnStatusQueued,
 		RequestDigest:  "digest",
 	}); err != nil {
 		t.Fatalf("CreateTurn() error = %v", err)
@@ -68,7 +68,7 @@ func TestIntegration_ChatTurnDuplicateKey(t *testing.T) {
 	_, err := sto.Convo().CreateTurn(ctx, convo.ChatTurnBasic{
 		IdempotencyKey: key,
 		Source:         "test",
-		Status:         TurnStatusQueued,
+		Status:         convo.TurnStatusQueued,
 		RequestDigest:  "digest",
 	})
 	if !errors.Is(err, ErrDuplicate) {
@@ -84,7 +84,7 @@ func TestIntegration_ReclaimInterruptedTurns(t *testing.T) {
 	turn, err := sto.Convo().CreateTurn(ctx, convo.ChatTurnBasic{
 		IdempotencyKey: key,
 		Source:         "test",
-		Status:         TurnStatusRunning,
+		Status:         convo.TurnStatusRunning,
 		RequestDigest:  "digest",
 	})
 	if err != nil {
@@ -99,8 +99,8 @@ func TestIntegration_ReclaimInterruptedTurns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTurnByIdempotencyKey() error = %v", err)
 	}
-	if found.Status != TurnStatusInterrupted {
-		t.Errorf("status = %q, want %q", found.Status, TurnStatusInterrupted)
+	if found.Status != convo.TurnStatusInterrupted {
+		t.Errorf("status = %v, want %v", found.Status, convo.TurnStatusInterrupted)
 	}
 	_ = turn
 }

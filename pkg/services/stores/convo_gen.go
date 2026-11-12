@@ -227,8 +227,14 @@ type ConvoChatTurnSpec struct {
 	IdempotencyKey string `extensions:"x-order=B" form:"idempotencyKey" json:"idempotencyKey"`
 	// 来源 web/channel
 	Source string `extensions:"x-order=C" form:"source" json:"source"`
-	// 状态 queued/running/succeeded/failed/cancelled/interrupted
-	Status string `extensions:"x-order=D" form:"status" json:"status"`
+	// 状态
+	//  * `queued` - 排队中
+	//  * `running` - 执行中
+	//  * `succeeded` - 已完成
+	//  * `failed` - 已失败
+	//  * `cancelled` - 已取消
+	//  * `interrupted` - 已中断
+	Status convo.TurnStatus `extensions:"x-order=D" form:"status" json:"status" swaggertype:"string"`
 	// 归属用户
 	OwnerID string `extensions:"x-order=E" form:"ownerId" json:"ownerId"`
 }
@@ -300,7 +306,19 @@ func (s *convoStore) UpdateSession(ctx context.Context, id string, in convo.Sess
 }
 func (s *convoStore) DeleteSession(ctx context.Context, id string) error {
 	obj := new(convo.Session)
-	return s.w.db.DeleteModel(ctx, obj, id)
+	if err := dbGetWithPKID(ctx, s.w.db, obj, id); err != nil {
+		if errorIs(err, ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	return s.w.db.RunInTx(ctx, nil, func(ctx context.Context, tx pgTx) (err error) {
+		if err = dbBeforeDeleteSession(ctx, tx, obj); err != nil {
+			return
+		}
+		err = dbDeleteM(ctx, tx, s.w.db.Schema(), s.w.db.SchemaCrap(), obj)
+		return
+	})
 }
 
 func (s *convoStore) ListMessage(ctx context.Context, spec *ConvoMessageSpec) (data convo.Messages, total int, err error) {

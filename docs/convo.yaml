@@ -20,6 +20,28 @@ enums:
     textMarshaler: true
     textUnmarshaler: true
 
+  - comment: 轮次状态
+    name: TurnStatus
+    start: 1
+    type: int8
+    values:
+      - label: 排队中
+        suffix: Queued
+      - label: 执行中
+        suffix: Running
+      - label: 已完成
+        suffix: Succeeded
+      - label: 已失败
+        suffix: Failed
+      - label: 已取消
+        suffix: Cancelled
+      - label: 已中断
+        suffix: Interrupted
+    stringer: true
+    decodable: true
+    textMarshaler: true
+    textUnmarshaler: true
+
 dbcode: bun
 modelpkg: convo
 
@@ -64,6 +86,8 @@ models:
     oidcat: event
     oidKey: cs
     specNs: convo
+    hooks:
+      beforeDeleting: yes
 
   - name: Message
     comment: '消息'
@@ -176,10 +200,10 @@ models:
         tags: {bson: 'source', json: 'source', pg: ',notnull,type:varchar(32)'}
         isset: true
         query: 'equal'
-      - comment: 状态 queued/running/succeeded/failed/cancelled/interrupted
+      - comment: 状态
         name: Status
-        type: string
-        tags: {bson: 'status', json: 'status', pg: ',notnull,type:varchar(16)'}
+        type: TurnStatus
+        tags: {bson: 'status', json: 'status', pg: ',notnull,type:smallint'}
         isset: true
         query: 'equal'
       - comment: 请求摘要

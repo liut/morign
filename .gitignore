@@ -114,6 +114,7 @@ tests/
 .idea/
 
 .deepseek/
+.codewhale/
 *.local.*
 
 morrigan

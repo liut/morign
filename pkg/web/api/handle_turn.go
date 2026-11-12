@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -37,7 +38,7 @@ type turnGate struct {
 type turnStore interface {
 	CreateTurn(ctx context.Context, in convo.ChatTurnBasic) (*convo.ChatTurn, error)
 	GetTurnByIdempotencyKey(ctx context.Context, key string) (*convo.ChatTurn, error)
-	UpdateTurnStatus(ctx context.Context, id, status, result string) error
+	UpdateTurnStatus(ctx context.Context, id string, status convo.TurnStatus, result string) error
 }
 
 // acquireTurn 申请一次聊天轮次的执行权。
@@ -49,7 +50,7 @@ func acquireTurn(ctx context.Context, sto turnStore, in convo.ChatTurnBasic, own
 	turn, err := sto.CreateTurn(ctx, in)
 	if err == nil {
 		// 独占创建：立刻转 running，之后的重复投递只会看到 running，不再进入执行。
-		if uerr := sto.UpdateTurnStatus(ctx, turn.StringID(), stores.TurnStatusRunning, ""); uerr != nil {
+		if uerr := sto.UpdateTurnStatus(ctx, turn.StringID(), convo.TurnStatusRunning, ""); uerr != nil {
 			return nil, uerr
 		}
 		return &turnGate{ID: turn.StringID(), Proceed: true}, nil
@@ -72,15 +73,20 @@ func acquireTurn(ctx context.Context, sto turnStore, in convo.ChatTurnBasic, own
 	}
 
 	switch existing.Status {
-	case stores.TurnStatusSucceeded:
+	case convo.TurnStatusSucceeded:
 		return &turnGate{ID: existing.StringID(), Replay: true, Cached: existing.Result}, nil
-	case stores.TurnStatusFailed, stores.TurnStatusCancelled:
-		if uerr := sto.UpdateTurnStatus(ctx, existing.StringID(), stores.TurnStatusRunning, ""); uerr != nil {
+	case convo.TurnStatusFailed, convo.TurnStatusCancelled:
+		if uerr := sto.UpdateTurnStatus(ctx, existing.StringID(), convo.TurnStatusRunning, ""); uerr != nil {
 			return nil, uerr
 		}
 		return &turnGate{ID: existing.StringID(), Proceed: true}, nil
-	default:
+	case convo.TurnStatusQueued, convo.TurnStatusRunning, convo.TurnStatusInterrupted:
+		// 仍在执行中：既不重复执行，也不返回结果。
 		return &turnGate{ID: existing.StringID()}, nil
+	default:
+		// 未知状态：既不执行，也不静默占住幂等键。
+		logger().Warn("turn: unknown status", "turn", existing.StringID(), "status", existing.Status)
+		return nil, fmt.Errorf("unknown turn status %d", existing.Status)
 	}
 }
 
@@ -91,16 +97,16 @@ func finishTurn(ctx context.Context, sto turnStore, turnID, answer string, toolR
 	if turnID == "" {
 		return
 	}
-	status, result := stores.TurnStatusSucceeded, answer
+	status, result := convo.TurnStatusSucceeded, answer
 	switch {
 	case runErr == nil:
 	case ctx.Err() != nil:
-		status = stores.TurnStatusCancelled
+		status = convo.TurnStatusCancelled
 		if toolRan {
-			status = stores.TurnStatusInterrupted
+			status = convo.TurnStatusInterrupted
 		}
 	default:
-		status = stores.TurnStatusFailed
+		status = convo.TurnStatusFailed
 		result = runErr.Error()
 	}
 	wctx := context.WithoutCancel(ctx)
@@ -202,7 +208,7 @@ func (a *api) acquireChatTurn(ctx context.Context, param *ChatRequest, ccr *chat
 		SessionID:      ccr.cs.GetOID(),
 		IdempotencyKey: key,
 		Source:         "web",
-		Status:         stores.TurnStatusQueued,
+		Status:         convo.TurnStatusQueued,
 		RequestDigest:  digest,
 		OwnerID:        owner,
 	}
