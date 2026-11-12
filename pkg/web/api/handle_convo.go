@@ -290,10 +290,8 @@ func (a *api) handleSSEStream(w http.ResponseWriter, r *http.Request, ctx contex
 			finish = event.StopReason
 
 			if len(event.ToolCalls) > 0 && event.StopReason == llm.FinishReasonToolCalls {
-				cm.ToolCalls = convertToolCallsForJSON(event.ToolCalls)
+				applyToolCalls(&cm, event, ccr.cs.GetID())
 				chunkIdx++
-				cm.ConversationID = ccr.cs.GetID()
-				cm.FinishReason = string(event.StopReason)
 				_ = writeEvent(w, strconv.Itoa(chunkIdx), &cm)
 			}
 
@@ -524,6 +522,14 @@ func (a *api) getHistory(w http.ResponseWriter, r *http.Request) {
 // @Router /api/tools [get]
 func (a *api) getTools(w http.ResponseWriter, r *http.Request) {
 	apiOk(w, r, a.toolreg.ToolsFor(r.Context()), 0)
+}
+
+// applyToolCalls 把工具调用事件装配成对外消息：驼峰为主键，过渡期同时保留下划线别名。
+// 装配点收敛在此，写入方绕过它就会漏掉别名，旧客户端将静默失去工具调用。
+func applyToolCalls(cm *ChatMessage, event *llm.Event, csid string) {
+	cm.setToolCalls(convertToolCallsForJSON(event.ToolCalls))
+	cm.ConversationID = csid
+	cm.FinishReason = string(event.StopReason)
 }
 
 // convertToolCallsForJSON 将 llm.ToolCall 转换为可序列化的 map 格式

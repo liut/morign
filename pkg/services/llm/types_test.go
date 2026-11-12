@@ -390,3 +390,31 @@ func TestToolLogs_String(t *testing.T) {
 		})
 	}
 }
+
+// Message 走 OpenAI 兼容协议：工具调用字段必须是下划线，改名会直接打断模型调用。
+func TestMessageJSONKeepsOpenAIFieldNames(t *testing.T) {
+	b, err := json.Marshal(Message{
+		Role:       RoleAssistant,
+		ToolCalls:  []ToolCall{{ID: "call_1", Type: "function"}},
+		ToolCallID: "call_1",
+	})
+	if err != nil {
+		t.Fatalf("marshal Message: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(b, &decoded); err != nil {
+		t.Fatalf("unmarshal Message: %v", err)
+	}
+
+	for _, key := range []string{"tool_calls", "tool_call_id"} {
+		if _, ok := decoded[key]; !ok {
+			t.Errorf("payload missing %q: %s", key, b)
+		}
+	}
+	for _, key := range []string{"toolCalls", "toolCallID"} {
+		if _, ok := decoded[key]; ok {
+			t.Errorf("payload should not contain %q: %s", key, b)
+		}
+	}
+}
