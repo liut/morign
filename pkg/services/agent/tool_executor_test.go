@@ -758,3 +758,176 @@ func TestTruncateToolResultRespectsLimit(t *testing.T) {
 		}
 	}
 }
+
+// 成功路径：字符数按未截断的原文统计，与截断后的正文分开。
+func TestToolResultContentLen(t *testing.T) {
+	setToolResultMaxChars(t, 120)
+	reg := testRegistry()
+	reg.RegisterInvoker("echo", func(ctx context.Context, params map[string]any) (map[string]any, error) {
+		return textToolResult(strings.Repeat("字", 400)), nil
+	})
+
+	te := NewToolExecutor(reg)
+	evs, _, _ := te.ExecuteToolCalls(context.Background(), nil,
+		[]llm.ToolCall{tc("c1", "echo", nil)}, "")
+
+	if len(evs) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(evs))
+	}
+	tr := evs[0].ToolResult
+	if tr.ContentLen != 400 {
+		t.Errorf("ContentLen = %d, want 400 (原始长度)", tr.ContentLen)
+	}
+	if n := utf8.RuneCountInString(tr.Content); n >= tr.ContentLen {
+		t.Errorf("content length %d should be below original length %d", n, tr.ContentLen)
+	}
+}
+
+// 错误路径：字符数按格式化后的错误原文统计。
+func TestToolResultErrorContentLen(t *testing.T) {
+	reg := testRegistry()
+	reg.RegisterInvoker("failer", func(ctx context.Context, params map[string]any) (map[string]any, error) {
+		return nil, errors.New("boom")
+	})
+
+	te := NewToolExecutor(reg)
+	evs, _, _ := te.ExecuteToolCalls(context.Background(), nil,
+		[]llm.ToolCall{tc("c1", "failer", nil)}, "")
+
+	if len(evs) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(evs))
+	}
+	tr := evs[0].ToolResult
+	if tr.ContentLen != utf8.RuneCountInString(tr.Content) {
+		t.Errorf("ContentLen = %d, want %d (错误原文长度)", tr.ContentLen, utf8.RuneCountInString(tr.Content))
+	}
+	if tr.ContentLen == 0 {
+		t.Error("ContentLen should be filled for error results")
+	}
+}
+
+// 全流程耗时：前置钩子阻塞时也要计入，否则被拒路径的耗时会恒为 0。
+func TestToolResultDurationCoversBeforeHook(t *testing.T) {
+	reg := testRegistry()
+	reg.RegisterInvoker("echo", func(ctx context.Context, params map[string]any) (map[string]any, error) {
+		return textToolResult("ok"), nil
+	})
+
+	te := NewToolExecutor(reg)
+	te.BeforeToolCall = func(ctx context.Context, name string, params map[string]any) (bool, string) {
+		time.Sleep(20 * time.Millisecond)
+		return true, "blocked by policy"
+	}
+
+	evs, _, _ := te.ExecuteToolCalls(context.Background(), nil,
+		[]llm.ToolCall{tc("c1", "echo", nil)}, "")
+
+	if len(evs) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(evs))
+	}
+	tr := evs[0].ToolResult
+	if tr.Status != llm.ToolStatusRejected {
+		t.Errorf("status = %q, want %q", tr.Status, llm.ToolStatusRejected)
+	}
+	if tr.DurationMS < 20 {
+		t.Errorf("DurationMS = %d, want >= 20 (含前置钩子耗时)", tr.DurationMS)
+	}
+}
+
+// 参数非法与 panic 这两条前置失败路径同样带耗时与字符数。
+func TestToolResultPreflightFailuresCarryMeta(t *testing.T) {
+	t.Run("invalid arguments", func(t *testing.T) {
+		reg := testRegistry()
+		reg.RegisterInvoker("echo", func(ctx context.Context, params map[string]any) (map[string]any, error) {
+			return textToolResult("ok"), nil
+		})
+
+		te := NewToolExecutor(reg)
+		calls := []llm.ToolCall{
+			{ID: "c1", Type: "function", Function: llm.ToolCallFunc{Name: "echo", Arguments: []byte("{not json")}},
+		}
+		evs, _, _ := te.ExecuteToolCalls(context.Background(), nil, calls, "")
+
+		if len(evs) != 1 {
+			t.Fatalf("expected 1 event, got %d", len(evs))
+		}
+		tr := evs[0].ToolResult
+		if tr.ErrorCode != llm.ToolErrorInvalidArguments {
+			t.Errorf("error code = %q, want %q", tr.ErrorCode, llm.ToolErrorInvalidArguments)
+		}
+		if tr.ContentLen == 0 {
+			t.Error("ContentLen should be filled for invalid arguments")
+		}
+		if tr.DurationMS < 0 {
+			t.Errorf("DurationMS = %d, want >= 0", tr.DurationMS)
+		}
+	})
+
+	t.Run("panic", func(t *testing.T) {
+		reg := testRegistry()
+		reg.RegisterInvoker("boom", func(ctx context.Context, params map[string]any) (map[string]any, error) {
+			panic("kaboom")
+		})
+
+		te := NewToolExecutor(reg)
+		evs, _, _ := te.ExecuteToolCalls(context.Background(), nil,
+			[]llm.ToolCall{tc("c1", "boom", nil)}, "")
+
+		if len(evs) != 1 {
+			t.Fatalf("expected 1 event, got %d", len(evs))
+		}
+		tr := evs[0].ToolResult
+		if tr.ErrorCode != llm.ToolErrorPanic {
+			t.Errorf("error code = %q, want %q", tr.ErrorCode, llm.ToolErrorPanic)
+		}
+		if tr.ContentLen == 0 {
+			t.Error("ContentLen should be filled for panic results")
+		}
+	})
+
+	t.Run("unsupported type", func(t *testing.T) {
+		reg := testRegistry()
+		te := NewToolExecutor(reg)
+		calls := []llm.ToolCall{
+			{ID: "c1", Type: "retrieval", Function: llm.ToolCallFunc{Name: "echo", Arguments: []byte("{}")}},
+		}
+		evs, _, _ := te.ExecuteToolCalls(context.Background(), nil, calls, "")
+
+		if len(evs) != 1 {
+			t.Fatalf("expected 1 event, got %d", len(evs))
+		}
+		tr := evs[0].ToolResult
+		if tr.ErrorCode != llm.ToolErrorUnsupportedType {
+			t.Errorf("error code = %q, want %q", tr.ErrorCode, llm.ToolErrorUnsupportedType)
+		}
+		if tr.ContentLen == 0 {
+			t.Error("ContentLen should be filled for unsupported type results")
+		}
+	})
+}
+
+// 同一批的工具各自独立计时：慢工具不影响快工具的耗时。
+func TestToolResultDurationIndependentPerCall(t *testing.T) {
+	reg := testRegistry()
+	reg.RegisterInvoker("slow", func(ctx context.Context, params map[string]any) (map[string]any, error) {
+		time.Sleep(50 * time.Millisecond)
+		return textToolResult("slow"), nil
+	})
+	reg.RegisterInvoker("fast", func(ctx context.Context, params map[string]any) (map[string]any, error) {
+		return textToolResult("fast"), nil
+	})
+
+	te := NewToolExecutor(reg)
+	evs, _, _ := te.ExecuteToolCalls(context.Background(), nil,
+		[]llm.ToolCall{tc("c1", "slow", nil), tc("c2", "fast", nil)}, "")
+
+	if len(evs) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(evs))
+	}
+	if evs[0].ToolResult.DurationMS < 50 {
+		t.Errorf("slow call DurationMS = %d, want >= 50", evs[0].ToolResult.DurationMS)
+	}
+	if evs[1].ToolResult.DurationMS >= 50 {
+		t.Errorf("fast call DurationMS = %d, want < 50 (各自独立计时)", evs[1].ToolResult.DurationMS)
+	}
+}

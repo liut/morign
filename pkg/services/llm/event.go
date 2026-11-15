@@ -54,7 +54,8 @@ type ToolResult struct {
 	ErrorCode  string // 仅 Status != ToolStatusOK 时有值，取值见 ToolError* 常量
 	Arguments  string // 入参原文
 	Seq        int    // 轮内序号，还原调用与结果的配对顺序
-	DurationMS int    // 执行耗时毫秒
+	DurationMS int    // 全流程耗时毫秒：自收到调用起算，含校验、钩子与执行
+	ContentLen int    // 结果内容的原始字符数（rune，未截断）
 }
 
 // ToolStatus 表示工具调用的执行状态。

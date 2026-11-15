@@ -21,6 +21,6 @@ type ToolRecordSpill struct {
 	Spilled bool
 	// ErrorCode 是错误码，非错误时为空。
 	ErrorCode string
-	// DurationMS 是执行耗时毫秒。
+	// DurationMS 是全流程耗时毫秒：自收到调用起算，含校验、钩子与执行。
 	DurationMS int
 }
