@@ -617,7 +617,7 @@ type ToolRecordBasic struct {
 	// 轮内顺序
 	Seq int `bson:"seq" bun:",notnull,type:int" extensions:"x-order=D" form:"seq" json:"seq" pg:",notnull,type:int"`
 	// 工具调用编号
-	CallID string `bson:"callId" bun:",notnull,type:varchar(64)" extensions:"x-order=E" form:"callId" json:"callId" pg:",notnull,type:varchar(64)"`
+	CallID string `bson:"callId" bun:",notnull,type:varchar(64)" extensions:"x-order=E" form:"callID" json:"callID" pg:",notnull,type:varchar(64)"`
 	// 工具名
 	ToolName string `bson:"toolName" bun:",notnull,type:varchar(128)" extensions:"x-order=F" form:"toolName" json:"toolName" pg:",notnull,type:varchar(128)"`
 	// 入参原文
@@ -675,7 +675,7 @@ type ToolRecordSet struct {
 	// 轮内顺序
 	Seq *int `extensions:"x-order=D" json:"seq"`
 	// 工具调用编号
-	CallID *string `extensions:"x-order=E" json:"callId"`
+	CallID *string `extensions:"x-order=E" json:"callID"`
 	// 工具名
 	ToolName *string `extensions:"x-order=F" json:"toolName"`
 	// 入参原文

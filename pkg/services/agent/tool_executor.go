@@ -198,26 +198,29 @@ func truncateToolResult(text string) string {
 
 // callTool 执行单次工具调用。失败转成结构化错误结果，保证每个 tool call 恰好一个结果；
 // 调用方 ctx 取消时返回 nil（无结果），由 ExecuteToolCalls 整批丢弃。
+// 计时从入口起算：类型校验、参数解析、前置钩子、执行与后置钩子都计入耗时，
+// 被拒、参数非法与 panic 这三条前置失败路径同样带真实耗时。
 func (e *ToolExecutor) callTool(ctx context.Context, tc llm.ToolCall, seq int) (ev *llm.Event) {
+	start := time.Now()
 	args := string(tc.Function.Arguments)
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("tool call panic recovered", "tool", tc.Function.Name, "panic", r)
-			ev = toolErrorResult(tc.ID, tc.Function.Name, llm.ToolErrorPanic, fmt.Sprintf("%v", r), args, seq, 0)
+			ev = toolErrorResult(tc.ID, tc.Function.Name, llm.ToolErrorPanic, fmt.Sprintf("%v", r), args, seq, elapsedMS(start))
 		}
 	}()
 
 	slog.Info("chat", "toolCallID", tc.ID, "toolCallType", tc.Type, "toolCallName", tc.Function.Name)
 
 	if tc.Type != "function" {
-		return toolErrorResult(tc.ID, tc.Function.Name, llm.ToolErrorUnsupportedType, tc.Type, args, seq, 0)
+		return toolErrorResult(tc.ID, tc.Function.Name, llm.ToolErrorUnsupportedType, tc.Type, args, seq, elapsedMS(start))
 	}
 
 	var parameters map[string]any
 	if args != "" && args != "{}" {
 		if err := json.Unmarshal(tc.Function.Arguments, &parameters); err != nil {
 			slog.Info("chat", "toolCallID", tc.ID, "args", args, "err", err)
-			return toolErrorResult(tc.ID, tc.Function.Name, llm.ToolErrorInvalidArguments, err.Error(), args, seq, 0)
+			return toolErrorResult(tc.ID, tc.Function.Name, llm.ToolErrorInvalidArguments, err.Error(), args, seq, elapsedMS(start))
 		}
 	}
 	if parameters == nil {
@@ -228,20 +231,18 @@ func (e *ToolExecutor) callTool(ctx context.Context, tc llm.ToolCall, seq int) (
 	if e.BeforeToolCall != nil {
 		block, reason := e.BeforeToolCall(ctx, tc.Function.Name, parameters)
 		if block {
-			return toolErrorResult(tc.ID, tc.Function.Name, llm.ToolErrorRejected, reason, args, seq, 0)
+			return toolErrorResult(tc.ID, tc.Function.Name, llm.ToolErrorRejected, reason, args, seq, elapsedMS(start))
 		}
 	}
 
-	start := time.Now()
 	content, err := e.toolreg.Invoke(ctx, tc.Function.Name, parameters)
-	durationMS := int(time.Since(start).Milliseconds())
 	if err != nil {
 		if ctx.Err() != nil {
 			slog.Info("tool call canceled by caller", "toolCallName", tc.Function.Name, "err", ctx.Err())
 			return nil
 		}
 		slog.Info("invokeTool fail", "toolCallName", tc.Function.Name, "err", err)
-		return toolErrorResult(tc.ID, tc.Function.Name, llm.ToolErrorExecutionFailed, err.Error(), args, seq, durationMS)
+		return toolErrorResult(tc.ID, tc.Function.Name, llm.ToolErrorExecutionFailed, err.Error(), args, seq, elapsedMS(start))
 	}
 
 	slog.Info("invokeTool ok", "toolCallName", tc.Function.Name,
@@ -265,13 +266,20 @@ func (e *ToolExecutor) callTool(ctx context.Context, tc llm.ToolCall, seq int) (
 		status, code = llm.ToolStatusError, llm.ToolErrorToolError
 	}
 	full := toolResultText(content)
+	durationMS := elapsedMS(start)
 	return toolResultEvent(tc.ID, tc.Function.Name,
 		e.spillToolResult(ctx, tc, seq, args, full, status, code, durationMS),
-		terminate, status, code, args, seq, durationMS)
+		terminate, status, code, args, seq, durationMS, utf8.RuneCountInString(full))
+}
+
+// elapsedMS 返回自 start 起的耗时毫秒。
+func elapsedMS(start time.Time) int {
+	return int(time.Since(start).Milliseconds())
 }
 
 // toolResultEvent 构造一个工具结果事件。
-func toolResultEvent(callID, name, content string, terminate bool, status, code, args string, seq, durationMS int) *llm.Event {
+// runeCount 是结果内容的原始字符数，与可能已截断的 content 分开统计。
+func toolResultEvent(callID, name, content string, terminate bool, status, code, args string, seq, durationMS, runeCount int) *llm.Event {
 	return &llm.Event{
 		ID:        llm.NewEventID(),
 		Timestamp: time.Now(),
@@ -286,19 +294,22 @@ func toolResultEvent(callID, name, content string, terminate bool, status, code,
 			Arguments:  args,
 			Seq:        seq,
 			DurationMS: durationMS,
+			RuneCount:  runeCount,
 		},
 	}
 }
 
 // toolErrorResult 构造一个失败调用的工具结果事件，错误码决定执行状态。
-// 错误文本同样受 ToolResultMaxChars 约束，避免超长错误撑爆上下文。
+// 错误文本同样受 ToolResultMaxChars 约束，避免超长错误撑爆上下文；
+// 字符数按未截断的原文统计。
 func toolErrorResult(callID, name, code, detail, args string, seq, durationMS int) *llm.Event {
 	status := llm.ToolStatusError
 	if code == llm.ToolErrorRejected {
 		status = llm.ToolStatusRejected
 	}
-	return toolResultEvent(callID, name, truncateToolResult(formatToolError(name, code, detail)),
-		false, status, code, args, seq, durationMS)
+	full := formatToolError(name, code, detail)
+	return toolResultEvent(callID, name, truncateToolResult(full),
+		false, status, code, args, seq, durationMS, utf8.RuneCountInString(full))
 }
 
 // formatToolError 生成对模型可见的错误文本，给出可行动的信息而非裸错误串。

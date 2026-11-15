@@ -1,5 +1,7 @@
 package api
 
+import "github.com/liut/morign/pkg/services/llm"
+
 const (
 	historyLimitToken = 50 * 1024
 	esDone            = "[DONE]"
@@ -53,6 +55,10 @@ type ChatMessage struct {
 	// For Role=tool prompts this should be set to the ID given in the assistant's prior request to call a tool.
 	ToolCallID string `json:"toolCallID,omitempty"`
 
+	// ToolResult 是工具执行结果的元信息：前端按 callID 与 ToolCalls 配对，
+	// 把工具卡片从「已发起」更新到终态。结果正文不在报文里，需要时走 tool_result_read 回读。
+	ToolResult *ChatToolResult `json:"toolResult,omitempty"`
+
 	FinishReason string `json:"finishReason,omitempty"`
 
 	ConversationID string `json:"csid,omitempty"`
@@ -60,9 +66,43 @@ type ChatMessage struct {
 	Title string `json:"title,omitempty"`
 }
 
+// ChatToolResult 是工具执行结果对外协议：只含元信息，不含结果正文。
+type ChatToolResult struct {
+	// CallID 是模型给出的工具调用编号，与 toolCalls[].id 对应，是配对主键。
+	CallID string `json:"callID"`
+	// Name 是工具名。
+	Name string `json:"name"`
+	// Seq 是本次请求内的工具序号，从 0 起，跨轮递增；同一轮内的多个工具按调用顺序编号。
+	Seq int `json:"seq"`
+	// Status 是执行状态：ok / error / rejected。
+	Status string `json:"status"`
+	// Err 是错误码，仅失败时出现，取值见 llm.ToolError* 常量。
+	Err string `json:"err,omitempty"`
+	// Dur 是全流程耗时毫秒。
+	Dur int `json:"dur"`
+	// CLen 是结果内容的原始字符数（rune，未截断）。
+	CLen int `json:"clen"`
+}
+
 // setToolCalls 写入工具调用，并同时填充过渡期的下划线别名。
 // 别名字段由结构体承担，写入方不必关心协议兼容细节。
 func (cm *ChatMessage) setToolCalls(calls []map[string]any) {
 	cm.ToolCalls = calls
 	cm.ToolCallsLegacy = calls
+}
+
+// toolResultForJSON 把内部工具结果映射成对外协议：只搬运元信息，不下发正文。
+func toolResultForJSON(tr *llm.ToolResult) *ChatToolResult {
+	if tr == nil {
+		return nil
+	}
+	return &ChatToolResult{
+		CallID: tr.CallID,
+		Name:   tr.Name,
+		Seq:    tr.Seq,
+		Status: tr.Status,
+		Err:    tr.ErrorCode,
+		Dur:    tr.DurationMS,
+		CLen:   tr.RuneCount,
+	}
 }

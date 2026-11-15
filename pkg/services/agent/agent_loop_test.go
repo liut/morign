@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
 	"sync/atomic"
 	"testing"
@@ -623,5 +624,96 @@ func TestAgentLoopRunNonStreaming_AllTerminate(t *testing.T) {
 	// The key assertion: mock.idx should be 1 (only first result consumed)
 	if mock.idx != 1 {
 		t.Errorf("expected 1 Chat call, got %d (should have stopped at allTerminate)", mock.idx)
+	}
+}
+
+// 事件顺序：工具调用事件先于工具结果事件，前端按调用编号把结果对回调用。
+func TestAgentLoopEmitsToolCallBeforeToolResult(t *testing.T) {
+	reg := testRegistry()
+	reg.RegisterInvoker("echo", func(ctx context.Context, params map[string]any) (map[string]any, error) {
+		return textToolResult("ok"), nil
+	})
+
+	calls := 0
+	mock := &singleSeqMock{seq: func(yield func(*llm.Event, error) bool) {
+		calls++
+		if calls == 1 {
+			yield(&llm.Event{Delta: "thinking"}, nil)
+			yield(&llm.Event{Done: true, StopReason: llm.FinishReasonToolCalls,
+				ToolCalls: []llm.ToolCall{tc("c1", "echo", nil)}}, nil)
+			return
+		}
+		yield(&llm.Event{Done: true}, nil)
+	}}
+
+	loop := NewAgentLoop(AgentLoopConfig{LLM: mock, ToolExec: NewToolExecutor(reg)})
+
+	var kinds []string
+	events, err := collectEvents(loop.Run(context.Background(), nil, nil))
+	if err != nil {
+		t.Fatalf("loop error: %v", err)
+	}
+	for _, event := range events {
+		switch {
+		case event.ToolResult != nil:
+			kinds = append(kinds, "result")
+		case len(event.ToolCalls) > 0:
+			kinds = append(kinds, "call")
+		default:
+			kinds = append(kinds, "delta")
+		}
+	}
+
+	want := []string{"delta", "call", "result"}
+	if len(kinds) < len(want) {
+		t.Fatalf("event kinds = %v, want at least %v", kinds, want)
+	}
+	for i, kind := range want {
+		if kinds[i] != kind {
+			t.Fatalf("event kinds = %v, want %v at the head", kinds, want)
+		}
+	}
+}
+
+// 序号在一次请求内递增，跨轮不重置：前端按 seq 排序即可还原工具结果的先后。
+func TestAgentLoopSeqIncreasesAcrossRounds(t *testing.T) {
+	reg := testRegistry()
+	reg.RegisterInvoker("echo", func(ctx context.Context, params map[string]any) (map[string]any, error) {
+		return textToolResult("ok"), nil
+	})
+
+	round := 0
+	mock := &singleSeqMock{seq: func(yield func(*llm.Event, error) bool) {
+		round++
+		if round <= 2 {
+			yield(&llm.Event{Done: true, StopReason: llm.FinishReasonToolCalls,
+				ToolCalls: []llm.ToolCall{tc(fmt.Sprintf("c%d", round), "echo", nil)}}, nil)
+			return
+		}
+		yield(&llm.Event{Done: true}, nil)
+	}}
+
+	loop := NewAgentLoop(AgentLoopConfig{LLM: mock, ToolExec: NewToolExecutor(reg)})
+	ctx := ContextWithToolSeqCounter(context.Background(), NewToolSeqCounter())
+
+	var seqs []int
+	events, err := collectEvents(loop.Run(ctx, nil, nil))
+	if err != nil {
+		t.Fatalf("loop error: %v", err)
+	}
+	for _, event := range events {
+		if event.ToolResult != nil {
+			seqs = append(seqs, event.ToolResult.Seq)
+		}
+	}
+
+	want := []int{0, 1}
+	if len(seqs) != len(want) {
+		t.Fatalf("seqs = %v, want %v", seqs, want)
+	}
+	for i, seq := range want {
+		if seqs[i] != seq {
+			t.Fatalf("seqs = %v, want %v", seqs, want)
+		}
 	}
 }

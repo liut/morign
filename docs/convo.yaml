@@ -257,7 +257,7 @@ models:
       - comment: 工具调用编号
         name: CallID
         type: string
-        tags: {bson: 'callId', json: 'callId', pg: ',notnull,type:varchar(64)'}
+        tags: {bson: 'callId', json: 'callID', pg: ',notnull,type:varchar(64)'}
         isset: true
         query: 'equal'
       - comment: 工具名

@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -281,4 +283,178 @@ func TestConvertToolCallsForJSON_IncompleteJSON(t *testing.T) {
 			}
 		})
 	}
+}
+
+// 工具结果的 SSE 报文：role 标记类型，元信息收在 toolResult 里。
+func TestWriteToolResultPayload(t *testing.T) {
+	ev := &llm.Event{ToolResult: &llm.ToolResult{
+		CallID:     "call_1",
+		Name:       "strata__exec",
+		Seq:        0,
+		Status:     llm.ToolStatusError,
+		ErrorCode:  llm.ToolErrorExecutionFailed,
+		DurationMS: 132,
+		RuneCount:  4096,
+	}}
+
+	var buf bytes.Buffer
+	if !writeToolResult(&buf, "1", ev) {
+		t.Fatal("writeToolResult failed")
+	}
+
+	var decoded map[string]any
+	payloads := ssePayloads(t, buf.String())
+	if len(payloads) != 1 {
+		t.Fatalf("expected exactly one SSE payload, got %d: %q", len(payloads), buf.String())
+	}
+	if err := json.Unmarshal([]byte(payloads[0]), &decoded); err != nil {
+		t.Fatalf("unmarshal SSE payload: %v", err)
+	}
+
+	if decoded["role"] != llm.RoleTool {
+		t.Errorf("role = %v, want %q", decoded["role"], llm.RoleTool)
+	}
+	tr, ok := decoded["toolResult"].(map[string]any)
+	if !ok {
+		t.Fatalf("toolResult is not an object: %v", decoded)
+	}
+	want := map[string]any{
+		"callID": "call_1",
+		"name":   "strata__exec",
+		"seq":    float64(0),
+		"status": llm.ToolStatusError,
+		"err":    llm.ToolErrorExecutionFailed,
+		"dur":    float64(132),
+		"clen":   float64(4096),
+	}
+	for key, value := range want {
+		if tr[key] != value {
+			t.Errorf("toolResult[%s] = %v, want %v", key, tr[key], value)
+		}
+	}
+}
+
+// 结果正文不进协议：报文里只有元信息。
+func TestWriteToolResultOmitsContent(t *testing.T) {
+	ev := &llm.Event{ToolResult: &llm.ToolResult{
+		CallID:  "call_1",
+		Name:    "strata__exec",
+		Status:  llm.ToolStatusOK,
+		Content: "secret payload",
+	}}
+
+	var buf bytes.Buffer
+	if !writeToolResult(&buf, "1", ev) {
+		t.Fatal("writeToolResult failed")
+	}
+
+	payloads := ssePayloads(t, buf.String())
+	if len(payloads) != 1 {
+		t.Fatalf("expected 1 payload, got %d", len(payloads))
+	}
+	if strings.Contains(payloads[0], "secret payload") {
+		t.Errorf("tool result content must not be sent to the client: %s", payloads[0])
+	}
+}
+
+// 一批工具的结果逐条下发：序号与调用编号按调用顺序。
+func TestWriteToolResultOrder(t *testing.T) {
+	events := []*llm.Event{
+		{ToolResult: &llm.ToolResult{CallID: "c1", Name: "a", Seq: 0, Status: llm.ToolStatusOK}},
+		{ToolResult: &llm.ToolResult{CallID: "c2", Name: "b", Seq: 1, Status: llm.ToolStatusError, ErrorCode: llm.ToolErrorToolError}},
+	}
+
+	var buf bytes.Buffer
+	for i, ev := range events {
+		if !writeToolResult(&buf, strconv.Itoa(i+1), ev) {
+			t.Fatalf("writeToolResult %d failed", i)
+		}
+	}
+
+	payloads := ssePayloads(t, buf.String())
+	if len(payloads) != 2 {
+		t.Fatalf("expected 2 payloads, got %d: %q", len(payloads), buf.String())
+	}
+	for i, want := range []struct {
+		callID string
+		seq    float64
+	}{{"c1", 0}, {"c2", 1}} {
+		var decoded map[string]any
+		if err := json.Unmarshal([]byte(payloads[i]), &decoded); err != nil {
+			t.Fatalf("unmarshal payload %d: %v", i, err)
+		}
+		tr, ok := decoded["toolResult"].(map[string]any)
+		if !ok {
+			t.Fatalf("payload %d has no toolResult: %s", i, payloads[i])
+		}
+		if tr["callID"] != want.callID || tr["seq"] != want.seq {
+			t.Errorf("payload %d toolResult = %v, want callID=%s seq=%v", i, tr, want.callID, want.seq)
+		}
+	}
+}
+
+// 工具调用消息先于工具结果消息：前端按调用编号把结果对回调用。
+func TestToolResultFollowsToolCall(t *testing.T) {
+	var buf bytes.Buffer
+
+	var callMsg ChatMessage
+	applyToolCalls(&callMsg, &llm.Event{
+		Done:       true,
+		StopReason: llm.FinishReasonToolCalls,
+		ToolCalls: []llm.ToolCall{{
+			ID:       "call_1",
+			Type:     "function",
+			Function: llm.ToolCallFunc{Name: "strata__exec", Arguments: json.RawMessage(`{"command":"ls"}`)},
+		}},
+	}, "csid_1")
+	if !writeEvent(&buf, "1", &callMsg) {
+		t.Fatal("writeEvent failed")
+	}
+
+	ev := &llm.Event{ToolResult: &llm.ToolResult{CallID: "call_1", Name: "strata__exec", Status: llm.ToolStatusOK}}
+	if !writeToolResult(&buf, "2", ev) {
+		t.Fatal("writeToolResult failed")
+	}
+
+	payloads := ssePayloads(t, buf.String())
+	if len(payloads) != 2 {
+		t.Fatalf("expected 2 payloads, got %d", len(payloads))
+	}
+
+	var callPayload, resultPayload map[string]any
+	if err := json.Unmarshal([]byte(payloads[0]), &callPayload); err != nil {
+		t.Fatalf("unmarshal tool call payload: %v", err)
+	}
+	if err := json.Unmarshal([]byte(payloads[1]), &resultPayload); err != nil {
+		t.Fatalf("unmarshal tool result payload: %v", err)
+	}
+
+	calls, ok := callPayload["toolCalls"].([]any)
+	if !ok || len(calls) != 1 {
+		t.Fatalf("tool call payload has no toolCalls: %s", payloads[0])
+	}
+	call, _ := calls[0].(map[string]any)
+	if call["id"] != "call_1" {
+		t.Errorf("toolCalls[0].id = %v, want call_1", call["id"])
+	}
+
+	tr, ok := resultPayload["toolResult"].(map[string]any)
+	if !ok {
+		t.Fatalf("tool result payload has no toolResult: %s", payloads[1])
+	}
+	if tr["callID"] != call["id"] {
+		t.Errorf("toolResult.callID = %v, want %v", tr["callID"], call["id"])
+	}
+}
+
+// ssePayloads 取出 SSE 输出里的全部 data 字段。
+func ssePayloads(t *testing.T, out string) []string {
+	t.Helper()
+	var payloads []string
+	for _, line := range strings.Split(out, "\n") {
+		if payload, ok := strings.CutPrefix(line, "data: "); ok {
+			payloads = append(payloads, payload)
+		}
+	}
+	return payloads
 }

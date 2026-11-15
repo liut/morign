@@ -261,7 +261,7 @@ type ConvoToolRecordSpec struct {
 	// 归属用户
 	OwnerID string `extensions:"x-order=C" form:"ownerId" json:"ownerId"`
 	// 工具调用编号
-	CallID string `extensions:"x-order=D" form:"callId" json:"callId"`
+	CallID string `extensions:"x-order=D" form:"callID" json:"callID"`
 	// 工具名
 	ToolName string `extensions:"x-order=E" form:"toolName" json:"toolName"`
 	// 结果状态

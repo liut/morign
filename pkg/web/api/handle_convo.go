@@ -272,6 +272,12 @@ func (a *api) handleSSEStream(w http.ResponseWriter, r *http.Request, ctx contex
 			if err := a.rnr.Persist(context.WithoutCancel(cctx), ccr.cs.GetID(), event); err != nil {
 				logger().Info("persist tool record fail", "err", err)
 			}
+			// 工具结果也下发：前端据此把工具卡片从「已发起」更新到终态。
+			// 取消路径在执行层整批丢弃，不会走到这里，取消不会被伪装成失败。
+			chunkIdx++
+			if !writeToolResult(w, strconv.Itoa(chunkIdx), event) {
+				break
+			}
 			continue
 		}
 
@@ -530,6 +536,20 @@ func applyToolCalls(cm *ChatMessage, event *llm.Event, csid string) {
 	cm.setToolCalls(convertToolCallsForJSON(event.ToolCalls))
 	cm.ConversationID = csid
 	cm.FinishReason = string(event.StopReason)
+}
+
+// applyToolResult 把工具结果事件装配成对外消息：结果字段收在 toolResult 里，
+// role 标记消息类型。装配点收敛在此，写入方不再零散搬字段。
+func applyToolResult(cm *ChatMessage, event *llm.Event) {
+	cm.Role = llm.RoleTool
+	cm.ToolResult = toolResultForJSON(event.ToolResult)
+}
+
+// writeToolResult 把工具结果事件写成一条 SSE 消息：前端据此把工具卡片从「已发起」更新到终态。
+func writeToolResult(w io.Writer, id string, event *llm.Event) bool {
+	var cm ChatMessage
+	applyToolResult(&cm, event)
+	return writeEvent(w, id, &cm)
 }
 
 // convertToolCallsForJSON 将 llm.ToolCall 转换为可序列化的 map 格式
