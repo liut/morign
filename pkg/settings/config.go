@@ -71,6 +71,10 @@ type Config struct {
 	// 单次工具结果进入 LLM 上下文前的字符数上限，超出即截断；0 表示不限制
 	ToolResultMaxChars int `envconfig:"TOOL_RESULT_MAX_CHARS" default:"20000"`
 
+	// MCP 传输层单次 HTTP 请求（initialize / tools list / call tool）的超时秒数，
+	// 兜底防挂起；须宽于工具自身的正常耗时，0 表示不限制
+	MCPToolTimeoutSeconds int `envconfig:"MCP_TOOL_TIMEOUT_SECONDS" default:"900" desc:"MCP 传输层单次 HTTP 请求超时秒数，0 表示不限制"`
+
 	// Skill 注入：频道默认加载的最近技能数量
 	SkillDefaultCount int `envconfig:"SKILL_DEFAULT_COUNT" default:"5" desc:"频道默认加载的最近技能数量"`
 

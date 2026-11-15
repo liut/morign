@@ -57,6 +57,8 @@ func (e *ToolExecutor) ExecuteToolCalls(ctx context.Context, messages []llm.Mess
 		return nil, messages, false
 	}
 
+	origLen := len(messages)
+
 	messages = append(messages, llm.Message{
 		Role:      llm.RoleAssistant,
 		Thinking:  think,
@@ -82,6 +84,13 @@ func (e *ToolExecutor) ExecuteToolCalls(ctx context.Context, messages []llm.Mess
 	}
 
 	wg.Wait()
+
+	// 客户端取消是请求终止而非工具故障：整批丢弃，不产出任何模型可见的工具结果，
+	// 消息保持传入原样；agent loop 下一轮 LLM 调用随 ctx 错误收束，轮次走 interrupted。
+	if err := ctx.Err(); err != nil {
+		slog.Info("tool calls canceled by caller", "err", err, "calls", n)
+		return nil, messages[:origLen], false
+	}
 
 	// Collect results in call order, build messages
 	events := make([]*llm.Event, 0, n)
@@ -187,7 +196,8 @@ func truncateToolResult(text string) string {
 	return words.TakeHead(text, headLen) + notice + words.TakeTail(text, tailLen)
 }
 
-// callTool 执行单次工具调用，任何失败都转成结构化错误结果，保证每个 tool call 恰好一个结果。
+// callTool 执行单次工具调用。失败转成结构化错误结果，保证每个 tool call 恰好一个结果；
+// 调用方 ctx 取消时返回 nil（无结果），由 ExecuteToolCalls 整批丢弃。
 func (e *ToolExecutor) callTool(ctx context.Context, tc llm.ToolCall, seq int) (ev *llm.Event) {
 	args := string(tc.Function.Arguments)
 	defer func() {
@@ -226,6 +236,10 @@ func (e *ToolExecutor) callTool(ctx context.Context, tc llm.ToolCall, seq int) (
 	content, err := e.toolreg.Invoke(ctx, tc.Function.Name, parameters)
 	durationMS := int(time.Since(start).Milliseconds())
 	if err != nil {
+		if ctx.Err() != nil {
+			slog.Info("tool call canceled by caller", "toolCallName", tc.Function.Name, "err", ctx.Err())
+			return nil
+		}
 		slog.Info("invokeTool fail", "toolCallName", tc.Function.Name, "err", err)
 		return toolErrorResult(tc.ID, tc.Function.Name, llm.ToolErrorExecutionFailed, err.Error(), args, seq, durationMS)
 	}

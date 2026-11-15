@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -300,6 +301,106 @@ func TestExecuteToolCallsNonFunctionType(t *testing.T) {
 	}
 	if len(msgs) != 2 {
 		t.Fatalf("expected 2 messages (assistant + 1 tool result), got %d", len(msgs))
+	}
+}
+
+func TestExecuteToolCallsCanceled(t *testing.T) {
+	// ctx 在工具执行期间被取消：不产生 tool result、不产生模型可见的错误文本，
+	// 消息保持传入原样（取消不留痕迹）。
+	reg := testRegistry()
+	reg.RegisterInvoker("blocker", func(ctx context.Context, params map[string]any) (map[string]any, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+
+	te := NewToolExecutor(reg)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	evs, msgs, allTerm := te.ExecuteToolCalls(ctx, nil,
+		[]llm.ToolCall{tc("c1", "blocker", nil)}, "")
+
+	if len(evs) != 0 {
+		t.Errorf("expected 0 events on cancel, got %d", len(evs))
+	}
+	if len(msgs) != 0 {
+		t.Errorf("expected messages unchanged on cancel, got %d", len(msgs))
+	}
+	if allTerm {
+		t.Error("allTerminate should be false on cancel")
+	}
+}
+
+func TestExecuteToolCallsCanceledDropsCompletedResults(t *testing.T) {
+	// 批次中已有工具成功完成，随后 ctx 被取消：整批丢弃，模型看不到部分状态。
+	reg := testRegistry()
+	reg.RegisterInvoker("fast", func(ctx context.Context, params map[string]any) (map[string]any, error) {
+		return textToolResult("fast-result"), nil
+	})
+	reg.RegisterInvoker("blocker", func(ctx context.Context, params map[string]any) (map[string]any, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+
+	te := NewToolExecutor(reg)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	evs, msgs, _ := te.ExecuteToolCalls(ctx, nil,
+		[]llm.ToolCall{tc("c1", "fast", nil), tc("c2", "blocker", nil)}, "")
+
+	if len(evs) != 0 {
+		t.Errorf("expected whole batch dropped on cancel, got %d events", len(evs))
+	}
+	if len(msgs) != 0 {
+		t.Errorf("expected messages unchanged on cancel, got %d", len(msgs))
+	}
+}
+
+func TestExecuteToolCallsCanceledStopsAgentLoop(t *testing.T) {
+	// Integration: 工具执行期间取消后，agent loop 不再发起新的 LLM 请求，以 ctx 错误收束。
+	reg := testRegistry()
+	reg.RegisterInvoker("blocker", func(ctx context.Context, params map[string]any) (map[string]any, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+
+	var llmCalls atomic.Int32
+	mock := &singleSeqMock{seq: func(yield func(*llm.Event, error) bool) {
+		llmCalls.Add(1)
+		yield(&llm.Event{Done: true, ToolCalls: []llm.ToolCall{tc("c1", "blocker", nil)}}, nil)
+	}}
+
+	te := NewToolExecutor(reg)
+	loop := NewAgentLoop(AgentLoopConfig{LLM: mock, ToolExec: te})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	var runErr error
+	for _, err := range loop.Run(ctx, nil, nil) {
+		if err != nil {
+			runErr = err
+		}
+	}
+
+	if runErr == nil {
+		t.Fatal("expected agent loop to end with ctx error")
+	}
+	if !errors.Is(runErr, context.Canceled) {
+		t.Errorf("run error = %v, want context.Canceled wrapped", runErr)
+	}
+	if got := llmCalls.Load(); got != 1 {
+		t.Errorf("LLM called %d times, want exactly 1 (no new round after cancel)", got)
 	}
 }
 

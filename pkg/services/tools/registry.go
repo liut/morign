@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
@@ -312,7 +313,11 @@ func (r *Registry) AddServer(ctx context.Context, server *mcps.ServerBasic) erro
 	case mcps.TransTypeSSE:
 		tp, err = transport.NewSSE(server.URL, transport.WithHeaderFunc(hf))
 	case mcps.TransTypeStreamable:
-		tp, err = transport.NewStreamableHTTP(server.URL, transport.WithHTTPHeaderFunc(hf))
+		opts := []transport.StreamableHTTPCOption{transport.WithHTTPHeaderFunc(hf)}
+		if timeout := mcpToolTimeout(); timeout > 0 {
+			opts = append(opts, transport.WithHTTPTimeout(timeout))
+		}
+		tp, err = transport.NewStreamableHTTP(server.URL, opts...)
 	default:
 		return fmt.Errorf("unsupported transport type: %v", server.TransType)
 	}
@@ -504,6 +509,14 @@ func (r *Registry) ChannelServerStatuses(channel string) []ChannelServerStatus {
 	return result
 }
 
+// mcpToolTimeout 返回 MCP 传输层超时；未配置或非正数时为 0（不限制）。
+func mcpToolTimeout() time.Duration {
+	if settings.Current.MCPToolTimeoutSeconds <= 0 {
+		return 0
+	}
+	return time.Duration(settings.Current.MCPToolTimeoutSeconds) * time.Second
+}
+
 // callServerToolWithClient 使用已捕获的 client 调用 MCP 工具，无需查 servers map
 func callServerToolWithClient(ctx context.Context, c *client.Client, toolName string, params map[string]any) (map[string]any, error) {
 	if params == nil {
@@ -518,6 +531,10 @@ func callServerToolWithClient(ctx context.Context, c *client.Client, toolName st
 			},
 		})
 	if err != nil {
+		if ctx.Err() != nil {
+			// 调用方取消：传播给上层分流，不伪装成工具故障
+			return nil, err
+		}
 		logger().Error("MCP server tool call failed", "tool", toolName, "err", err)
 		return mcps.BuildToolErrorResult(fmt.Sprintf("tool '%s' call failed: %s", toolName, err)), nil
 	}

@@ -151,6 +151,8 @@ type ToolResult struct {
 
 本计划不引入独立的工具超时配置。`Registry.Invoke` 接收调用方传入的 ctx，调用方的 deadline 或取消会以 error 形式返回，走 `execution_failed` 路径。超时语义由此免费获得，无需新配置项。
 
+> **修正（2026-11-13，见 `2026-11-13-001-fix-mcp-tool-call-cancel-and-timeout-plan.md`）**：上述前提「调用方 ctx 带 deadline」在 Web 链路不成立——ctx 直接来自 HTTP 请求，只有客户端断开才取消。该缺陷由后续计划修复：MCP 传输层新增可配置超时 `MORIGN_MCP_TOOL_TIMEOUT_SECONDS`（默认 900s）兜底，且客户端取消不再走 `execution_failed` 路径，而是整轮以 `interrupted` 收尾、不产出模型可见的工具错误文本。
+
 ### 截断策略
 
 `truncateToolResult` 从"只留头"改为"留头 + 留尾"，总字符上限仍为 `settings.Current.ToolResultMaxChars`（默认 20000）。
@@ -166,6 +168,7 @@ type ToolResult struct {
 ### Resolved During Planning
 
 - **是否引入独立的工具超时配置？** 否。ctx 取消与 deadline 已覆盖，且不新增配置项符合项目惯例。
+  （修正见「上下文取消与超时」一节的 2026-11-13 注记：Web 链路 ctx 无 deadline，超时兜底由 `2026-11-13-001` 以 MCP 传输层超时实现。）
 - **`ToolResult` 新字段是否会漏到客户端？** 不会。`handle_convo.go:217` 与 `handle_platform.go:226` 都在 `event.ToolResult != nil` 时 `continue`，工具结果事件从不发给客户端。
 - **是否删除 `ExecuteToolCallLoop`？** 是。已确认为本计划范围内（U4）。
 

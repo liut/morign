@@ -275,6 +275,7 @@ HTTPS_PROXY=socks5://proxy.my-company.xyz:1081
 | `MORIGN_RERANK_ENABLED` | false | Enable LLM re-rank of capability matches |
 | `MORIGN_MAX_LOOP_ITERATIONS` | 12 | Max agent tool call loop iterations |
 | `MORIGN_TOOL_RESULT_MAX_CHARS` | 20000 | Max characters per tool result before truncation (0 = unlimited) |
+| `MORIGN_MCP_TOOL_TIMEOUT_SECONDS` | 900 | Timeout for a single MCP HTTP request, guards against hangs (0 = unlimited) |
 
 Other switches (skills injection, memory tiers, OAuth, Sentry, ...) are listed by `./morign usage`.
 

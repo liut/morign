@@ -60,6 +60,12 @@ func NewAgentLoop(cfg AgentLoopConfig, opts ...AgentLoopOption) *AgentLoop {
 func (al *AgentLoop) Run(ctx context.Context, messages []llm.Message, tools []llm.ToolDefinition) iter.Seq2[*llm.Event, error] {
 	return func(yield func(*llm.Event, error) bool) {
 		for iter := 0; iter < al.cfg.MaxLoop; iter++ {
+			// 工具执行期间调用方取消后不再发起 LLM 请求，整轮随 ctx 错误收束。
+			if err := ctx.Err(); err != nil {
+				yield(nil, fmt.Errorf("agent loop: %w", err))
+				return
+			}
+
 			var roundThink strings.Builder
 			var toolCalls []llm.ToolCall
 
@@ -112,6 +118,10 @@ func (al *AgentLoop) Run(ctx context.Context, messages []llm.Message, tools []ll
 // until no tool calls remain or all tools signal terminate.
 func (al *AgentLoop) RunNonStreaming(ctx context.Context, messages []llm.Message, tools []llm.ToolDefinition) (string, error) {
 	for iter := 0; iter < al.cfg.MaxLoop; iter++ {
+		if err := ctx.Err(); err != nil {
+			return "", fmt.Errorf("agent loop: %w", err)
+		}
+
 		result, err := al.cfg.LLM.Chat(ctx, messages, tools)
 		if err != nil {
 			return "", fmt.Errorf("chat: %w", err)
