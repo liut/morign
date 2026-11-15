@@ -51,6 +51,9 @@ sequenceDiagram
             API->>LLM: StreamChat → iter.Seq2[*Event, error]
             LLM-->>API: Event{Delta, Think, ToolCalls, Done}
             API->>Client: SSE writeEvent(delta)
+            alt Done 且有 ToolCalls
+                API->>Client: SSE writeEvent(toolCalls, finishReason)
+            end
             alt 有 ToolCalls
                 API->>TE: ExecuteToolCalls(messages, toolCalls)
                 loop 每个 ToolCall
@@ -62,6 +65,8 @@ sequenceDiagram
                         TR->>TR: callServerTool (SSE/Streamable)
                     end
                     TR-->>TE: tool result
+                    TE-->>API: Event{ToolResult}
+                    API->>Client: SSE writeEvent(role=tool, toolResult)
                 end
                 TE-->>API: updated messages (含 tool results)
             else 无 ToolCalls

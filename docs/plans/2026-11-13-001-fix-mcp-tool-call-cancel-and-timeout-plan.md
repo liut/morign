@@ -89,7 +89,7 @@ turn 719183008252309652  seq=4  status=error
 
 - R7. regen 的语义不变：仍然忽略最后一次历史、重新发起 LLM、重新执行工具、替换而非追加历史。
 - R8. `Registry.Invoke` 的返回约定不变（工具自报失败返回 `error=nil` + `isError=true`，走「成功」分支）。
-- R9. 工具结果事件仍不发给客户端（`handle_convo.go` 与 `handle_platform.go` 在 `event.ToolResult != nil` 时 `continue`）。
+- R9. ~~工具结果事件仍不发给客户端~~ —— **已修订**（2026-11-15，见 `docs/plans/2026-11-15-001-feat-tool-result-feedback-plan.md`）：Web SSE 链路改为下发工具执行结果的元信息（`role=tool` + `toolResult`），供前端把工具卡片从「已发起」更新到终态。保留的语义：客户端取消时整批结果丢弃，取消既不外发也不伪装成失败；频道链路（`handle_platform.go`）仍不下发工具结果。
 
 ---
 
