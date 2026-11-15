@@ -1,7 +1,7 @@
 ---
 title: 'feat: 工具调用结果向前端反馈执行元信息'
 type: feat
-status: active
+status: completed
 date: 2026-11-15
 ---
 
