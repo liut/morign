@@ -55,7 +55,7 @@ type ToolResult struct {
 	Arguments  string // 入参原文
 	Seq        int    // 轮内序号，还原调用与结果的配对顺序
 	DurationMS int    // 全流程耗时毫秒：自收到调用起算，含校验、钩子与执行
-	ContentLen int    // 结果内容的原始字符数（rune，未截断）
+	RuneCount int    // 结果内容的原始字符数（rune，未截断）：与被截断的 Content 分开统计
 }
 
 // ToolStatus 表示工具调用的执行状态。

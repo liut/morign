@@ -294,7 +294,7 @@ func TestWriteToolResultPayload(t *testing.T) {
 		Status:     llm.ToolStatusError,
 		ErrorCode:  llm.ToolErrorExecutionFailed,
 		DurationMS: 132,
-		ContentLen: 4096,
+		RuneCount:  4096,
 	}}
 
 	var buf bytes.Buffer

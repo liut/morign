@@ -72,7 +72,7 @@ type ChatToolResult struct {
 	CallID string `json:"callId"`
 	// Name 是工具名。
 	Name string `json:"name"`
-	// Seq 是轮内序号，从 0 起。
+	// Seq 是本次请求内的工具序号，从 0 起，跨轮递增；同一轮内的多个工具按调用顺序编号。
 	Seq int `json:"seq"`
 	// Status 是执行状态：ok / error / rejected。
 	Status string `json:"status"`
@@ -103,6 +103,6 @@ func toolResultForJSON(tr *llm.ToolResult) *ChatToolResult {
 		Status: tr.Status,
 		Err:    tr.ErrorCode,
 		Dur:    tr.DurationMS,
-		CLen:   tr.ContentLen,
+		CLen:   tr.RuneCount,
 	}
 }

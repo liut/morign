@@ -278,8 +278,8 @@ func elapsedMS(start time.Time) int {
 }
 
 // toolResultEvent 构造一个工具结果事件。
-// contentLen 是结果内容的原始字符数，与可能已截断的 content 分开统计。
-func toolResultEvent(callID, name, content string, terminate bool, status, code, args string, seq, durationMS, contentLen int) *llm.Event {
+// runeCount 是结果内容的原始字符数，与可能已截断的 content 分开统计。
+func toolResultEvent(callID, name, content string, terminate bool, status, code, args string, seq, durationMS, runeCount int) *llm.Event {
 	return &llm.Event{
 		ID:        llm.NewEventID(),
 		Timestamp: time.Now(),
@@ -294,7 +294,7 @@ func toolResultEvent(callID, name, content string, terminate bool, status, code,
 			Arguments:  args,
 			Seq:        seq,
 			DurationMS: durationMS,
-			ContentLen: contentLen,
+			RuneCount:  runeCount,
 		},
 	}
 }

@@ -262,7 +262,7 @@ func TestChatMessageToolResultJSON(t *testing.T) {
 		Name:       "echo",
 		Status:     llm.ToolStatusOK,
 		DurationMS: 12,
-		ContentLen: 34,
+		RuneCount:  34,
 	}})
 
 	data, err := json.Marshal(msg)
@@ -318,7 +318,7 @@ func TestToolResultForJSON(t *testing.T) {
 		Status:     llm.ToolStatusRejected,
 		ErrorCode:  llm.ToolErrorRejected,
 		DurationMS: 7,
-		ContentLen: 99,
+		RuneCount:  99,
 	})
 
 	if got == nil {

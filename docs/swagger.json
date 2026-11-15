@@ -4723,7 +4723,7 @@
                     "type": "string"
                 },
                 "seq": {
-                    "description": "Seq 是轮内序号，从 0 起。",
+                    "description": "Seq 是本次请求内的工具序号，从 0 起，跨轮递增；同一轮内的多个工具按调用顺序编号。",
                     "type": "integer"
                 },
                 "status": {

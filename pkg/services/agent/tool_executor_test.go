@@ -760,7 +760,7 @@ func TestTruncateToolResultRespectsLimit(t *testing.T) {
 }
 
 // 成功路径：字符数按未截断的原文统计，与截断后的正文分开。
-func TestToolResultContentLen(t *testing.T) {
+func TestToolResultRuneCount(t *testing.T) {
 	setToolResultMaxChars(t, 120)
 	reg := testRegistry()
 	reg.RegisterInvoker("echo", func(ctx context.Context, params map[string]any) (map[string]any, error) {
@@ -775,16 +775,16 @@ func TestToolResultContentLen(t *testing.T) {
 		t.Fatalf("expected 1 event, got %d", len(evs))
 	}
 	tr := evs[0].ToolResult
-	if tr.ContentLen != 400 {
-		t.Errorf("ContentLen = %d, want 400 (原始长度)", tr.ContentLen)
+	if tr.RuneCount != 400 {
+		t.Errorf("RuneCount = %d, want 400 (原始长度)", tr.RuneCount)
 	}
-	if n := utf8.RuneCountInString(tr.Content); n >= tr.ContentLen {
-		t.Errorf("content length %d should be below original length %d", n, tr.ContentLen)
+	if n := utf8.RuneCountInString(tr.Content); n >= tr.RuneCount {
+		t.Errorf("content length %d should be below original length %d", n, tr.RuneCount)
 	}
 }
 
 // 错误路径：字符数按格式化后的错误原文统计。
-func TestToolResultErrorContentLen(t *testing.T) {
+func TestToolResultErrorRuneCount(t *testing.T) {
 	reg := testRegistry()
 	reg.RegisterInvoker("failer", func(ctx context.Context, params map[string]any) (map[string]any, error) {
 		return nil, errors.New("boom")
@@ -798,11 +798,11 @@ func TestToolResultErrorContentLen(t *testing.T) {
 		t.Fatalf("expected 1 event, got %d", len(evs))
 	}
 	tr := evs[0].ToolResult
-	if tr.ContentLen != utf8.RuneCountInString(tr.Content) {
-		t.Errorf("ContentLen = %d, want %d (错误原文长度)", tr.ContentLen, utf8.RuneCountInString(tr.Content))
+	if tr.RuneCount != utf8.RuneCountInString(tr.Content) {
+		t.Errorf("RuneCount = %d, want %d (错误原文长度)", tr.RuneCount, utf8.RuneCountInString(tr.Content))
 	}
-	if tr.ContentLen == 0 {
-		t.Error("ContentLen should be filled for error results")
+	if tr.RuneCount == 0 {
+		t.Error("RuneCount should be filled for error results")
 	}
 }
 
@@ -855,8 +855,8 @@ func TestToolResultPreflightFailuresCarryMeta(t *testing.T) {
 		if tr.ErrorCode != llm.ToolErrorInvalidArguments {
 			t.Errorf("error code = %q, want %q", tr.ErrorCode, llm.ToolErrorInvalidArguments)
 		}
-		if tr.ContentLen == 0 {
-			t.Error("ContentLen should be filled for invalid arguments")
+		if tr.RuneCount == 0 {
+			t.Error("RuneCount should be filled for invalid arguments")
 		}
 		if tr.DurationMS < 0 {
 			t.Errorf("DurationMS = %d, want >= 0", tr.DurationMS)
@@ -880,8 +880,8 @@ func TestToolResultPreflightFailuresCarryMeta(t *testing.T) {
 		if tr.ErrorCode != llm.ToolErrorPanic {
 			t.Errorf("error code = %q, want %q", tr.ErrorCode, llm.ToolErrorPanic)
 		}
-		if tr.ContentLen == 0 {
-			t.Error("ContentLen should be filled for panic results")
+		if tr.RuneCount == 0 {
+			t.Error("RuneCount should be filled for panic results")
 		}
 	})
 
@@ -900,8 +900,8 @@ func TestToolResultPreflightFailuresCarryMeta(t *testing.T) {
 		if tr.ErrorCode != llm.ToolErrorUnsupportedType {
 			t.Errorf("error code = %q, want %q", tr.ErrorCode, llm.ToolErrorUnsupportedType)
 		}
-		if tr.ContentLen == 0 {
-			t.Error("ContentLen should be filled for unsupported type results")
+		if tr.RuneCount == 0 {
+			t.Error("RuneCount should be filled for unsupported type results")
 		}
 	})
 }
