@@ -193,3 +193,151 @@ func TestApplyToolCalls(t *testing.T) {
 		}
 	}
 }
+
+// 工具结果对外协议：字段名固定，err 只在失败时出现。
+func TestChatToolResultJSON(t *testing.T) {
+	tr := ChatToolResult{
+		CallID: "call_1",
+		Name:   "strata__exec",
+		Seq:    0,
+		Status: llm.ToolStatusError,
+		Err:    llm.ToolErrorExecutionFailed,
+		Dur:    132,
+		CLen:   4096,
+	}
+
+	data, err := json.Marshal(tr)
+	if err != nil {
+		t.Fatalf("marshal ChatToolResult: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal ChatToolResult: %v", err)
+	}
+
+	want := map[string]any{
+		"callId": "call_1",
+		"name":   "strata__exec",
+		"seq":    float64(0),
+		"status": llm.ToolStatusError,
+		"err":    llm.ToolErrorExecutionFailed,
+		"dur":    float64(132),
+		"clen":   float64(4096),
+	}
+	for key, value := range want {
+		if decoded[key] != value {
+			t.Errorf("%s = %v, want %v: %s", key, decoded[key], value, data)
+		}
+	}
+}
+
+// 成功结果没有错误码；seq / dur / clen 即使为零也要出现在报文里。
+func TestChatToolResultJSONOmitErr(t *testing.T) {
+	data, err := json.Marshal(ChatToolResult{CallID: "call_1", Name: "echo", Status: llm.ToolStatusOK})
+	if err != nil {
+		t.Fatalf("marshal ChatToolResult: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal ChatToolResult: %v", err)
+	}
+
+	if _, ok := decoded["err"]; ok {
+		t.Errorf("successful result should omit err: %s", data)
+	}
+	for _, key := range []string{"seq", "dur", "clen"} {
+		if _, ok := decoded[key]; !ok {
+			t.Errorf("payload missing %q: %s", key, data)
+		}
+	}
+}
+
+// 带工具结果的消息：role 标记类型，结果收在 toolResult 里。
+func TestChatMessageToolResultJSON(t *testing.T) {
+	var msg ChatMessage
+	applyToolResult(&msg, &llm.Event{ToolResult: &llm.ToolResult{
+		CallID:     "call_1",
+		Name:       "echo",
+		Status:     llm.ToolStatusOK,
+		DurationMS: 12,
+		ContentLen: 34,
+	}})
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal ChatMessage: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal ChatMessage: %v", err)
+	}
+
+	if decoded["role"] != llm.RoleTool {
+		t.Errorf("role = %v, want %q: %s", decoded["role"], llm.RoleTool, data)
+	}
+	tr, ok := decoded["toolResult"].(map[string]any)
+	if !ok {
+		t.Fatalf("toolResult is not an object: %s", data)
+	}
+	if tr["callId"] != "call_1" || tr["name"] != "echo" {
+		t.Errorf("toolResult = %v, want callId=call_1 name=echo", tr)
+	}
+	if tr["dur"] != float64(12) || tr["clen"] != float64(34) {
+		t.Errorf("toolResult = %v, want dur=12 clen=34", tr)
+	}
+}
+
+// 普通助手消息不带工具结果：两个键都不出现。
+func TestChatMessageWithoutToolResult(t *testing.T) {
+	data, err := json.Marshal(ChatMessage{Delta: "hi"})
+	if err != nil {
+		t.Fatalf("marshal ChatMessage: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal ChatMessage: %v", err)
+	}
+
+	for _, key := range []string{"toolResult", "role"} {
+		if _, ok := decoded[key]; ok {
+			t.Errorf("payload should omit %q when there is no tool result: %s", key, data)
+		}
+	}
+}
+
+// 映射只搬运字段，不做语义加工。
+func TestToolResultForJSON(t *testing.T) {
+	got := toolResultForJSON(&llm.ToolResult{
+		CallID:     "call_1",
+		Name:       "echo",
+		Seq:        3,
+		Status:     llm.ToolStatusRejected,
+		ErrorCode:  llm.ToolErrorRejected,
+		DurationMS: 7,
+		ContentLen: 99,
+	})
+
+	if got == nil {
+		t.Fatal("toolResultForJSON returned nil")
+	}
+	if got.CallID != "call_1" || got.Name != "echo" || got.Seq != 3 {
+		t.Errorf("got = %+v, want callId/name/seq mapped", got)
+	}
+	if got.Status != llm.ToolStatusRejected || got.Err != llm.ToolErrorRejected {
+		t.Errorf("got = %+v, want status/err mapped", got)
+	}
+	if got.Dur != 7 || got.CLen != 99 {
+		t.Errorf("got = %+v, want dur=7 clen=99", got)
+	}
+}
+
+// 没有工具结果时不产生协议对象。
+func TestToolResultForJSONNil(t *testing.T) {
+	if got := toolResultForJSON(nil); got != nil {
+		t.Errorf("got = %+v, want nil", got)
+	}
+}

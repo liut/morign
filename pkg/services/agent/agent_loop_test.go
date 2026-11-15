@@ -625,3 +625,51 @@ func TestAgentLoopRunNonStreaming_AllTerminate(t *testing.T) {
 		t.Errorf("expected 1 Chat call, got %d (should have stopped at allTerminate)", mock.idx)
 	}
 }
+
+// 事件顺序：工具调用事件先于工具结果事件，前端按调用编号把结果对回调用。
+func TestAgentLoopEmitsToolCallBeforeToolResult(t *testing.T) {
+	reg := testRegistry()
+	reg.RegisterInvoker("echo", func(ctx context.Context, params map[string]any) (map[string]any, error) {
+		return textToolResult("ok"), nil
+	})
+
+	calls := 0
+	mock := &singleSeqMock{seq: func(yield func(*llm.Event, error) bool) {
+		calls++
+		if calls == 1 {
+			yield(&llm.Event{Delta: "thinking"}, nil)
+			yield(&llm.Event{Done: true, StopReason: llm.FinishReasonToolCalls,
+				ToolCalls: []llm.ToolCall{tc("c1", "echo", nil)}}, nil)
+			return
+		}
+		yield(&llm.Event{Done: true}, nil)
+	}}
+
+	loop := NewAgentLoop(AgentLoopConfig{LLM: mock, ToolExec: NewToolExecutor(reg)})
+
+	var kinds []string
+	events, err := collectEvents(loop.Run(context.Background(), nil, nil))
+	if err != nil {
+		t.Fatalf("loop error: %v", err)
+	}
+	for _, event := range events {
+		switch {
+		case event.ToolResult != nil:
+			kinds = append(kinds, "result")
+		case len(event.ToolCalls) > 0:
+			kinds = append(kinds, "call")
+		default:
+			kinds = append(kinds, "delta")
+		}
+	}
+
+	want := []string{"delta", "call", "result"}
+	if len(kinds) < len(want) {
+		t.Fatalf("event kinds = %v, want at least %v", kinds, want)
+	}
+	for i, kind := range want {
+		if kinds[i] != kind {
+			t.Fatalf("event kinds = %v, want %v at the head", kinds, want)
+		}
+	}
+}
